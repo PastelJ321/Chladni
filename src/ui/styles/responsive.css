@@ -1,0 +1,392 @@
+@supports not (backdrop-filter: blur(1px)) {
+  .glass {
+    background: linear-gradient(135deg, #f3f6f7f5, #dbe4eaf5);
+    border-color: #fff;
+    box-shadow:
+      inset 0 1px 1px #fff,
+      0 6px 22px #152b3c35;
+  }
+}
+@media (min-width: 1800px) {
+  .lab-layout {
+    grid-template-columns: 310px minmax(0, 1fr) 280px;
+  }
+  .configuration {
+    padding: 26px;
+  }
+  .experiment-main {
+    padding: 26px 30px 0;
+  }
+  .analysis {
+    padding: 26px;
+  }
+  .stage {
+    height: 60vh;
+  }
+}
+@media (max-width: 1250px) {
+  .lab-layout {
+    grid-template-columns: 254px minmax(0, 1fr) 210px;
+  }
+  .configuration {
+    padding: 20px 16px;
+  }
+  .analysis {
+    padding: 22px 14px;
+  }
+  .experiment-main {
+    padding: 20px 16px 0;
+  }
+  .workspace-nav > button {
+    padding: 0 12px;
+  }
+  .nav-detail {
+    display: none;
+  }
+  .experiment-toolbar {
+    align-items: flex-start;
+  }
+  .toolbar-actions {
+    flex-direction: column;
+    align-items: flex-end;
+  }
+  .stage-bottom {
+    bottom: 45px;
+  }
+  .camera-bar button {
+    padding: 8px;
+  }
+  .analysis-toolbar {
+    gap: 10px;
+  }
+  .source-chip {
+    font-size: 9px;
+  }
+  .scene-dimensions {
+    font-size: 9px;
+  }
+  .big-value {
+    font-size: 32px;
+  }
+}
+@media (max-width: 1050px) {
+  .lab-layout {
+    grid-template-columns: 248px minmax(0, 1fr);
+  }
+  .analysis {
+    display: none;
+  }
+  .app-header {
+    padding: 0 20px;
+    gap: 20px;
+  }
+  .workspace-nav {
+    padding: 0 13px;
+  }
+  .workspace-nav > button {
+    font-size: 12px;
+    gap: 7px;
+    padding: 0 15px;
+  }
+  .project-name {
+    display: none;
+  }
+  .stage {
+    height: 55vh;
+  }
+  .experiment-toolbar h1 {
+    font-size: 19px;
+  }
+}
+@media (max-width: 760px) {
+  .app-header {
+    height: 57px;
+    padding: 0 15px;
+  }
+  .wordmark {
+    font-size: 21px;
+  }
+  .wordmark small {
+    display: none;
+  }
+  .file-actions {
+    gap: 1px;
+  }
+  .file-actions button {
+    font-size: 10px;
+    padding: 7px;
+  }
+  .file-actions button svg {
+    display: none;
+  }
+  .workspace-nav {
+    height: 51px;
+    padding: 0 8px;
+    gap: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .workspace-nav > button {
+    font-size: 11px;
+    padding: 0 13px;
+    gap: 7px;
+  }
+  .workspace-nav > button svg {
+    width: 14px;
+  }
+  .lab-layout {
+    display: block;
+  }
+  .settings-slot {
+    display: none;
+  }
+  .settings-slot.mobile-open {
+    display: block;
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: 290px;
+    z-index: 25;
+    box-shadow:
+      0 0 0 100vw #172a3b60,
+      15px 0 50px #13263830;
+  }
+  .configuration {
+    max-height: 100dvh;
+    padding-top: 25px;
+    height: 100dvh;
+  }
+  .close-mobile {
+    display: flex;
+    position: absolute;
+    right: 10px;
+    top: 13px;
+    z-index: 2;
+    padding: 4px;
+    border: 0;
+    background: none;
+  }
+  .mobile-settings {
+    display: inline-flex !important;
+  }
+  .experiment-main {
+    padding: 17px 12px 0;
+  }
+  .experiment-toolbar {
+    padding-bottom: 17px;
+    gap: 7px;
+  }
+  .experiment-toolbar h1 {
+    font-size: 18px;
+  }
+  .toolbar-actions {
+    flex-direction: row;
+    align-items: center;
+    gap: 5px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    max-width: 190px;
+  }
+  .toolbar-actions button {
+    padding: 7px;
+    font-size: 10px;
+  }
+  .toolbar-actions button:not(.mobile-settings):not(.primary) {
+    display: none;
+  }
+  .toolbar-actions .primary svg {
+    display: none;
+  }
+  .breadcrumb {
+    font-size: 9px;
+  }
+  .stage {
+    height: 52vh;
+    min-height: 365px;
+    border-radius: 8px;
+  }
+  .stage-top {
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .source-chip {
+    font-size: 8px;
+    padding: 6px 8px;
+  }
+  .scene-dimensions {
+    font-size: 8px;
+    line-height: 1.5;
+  }
+  .stage-bottom {
+    bottom: 43px;
+    gap: 6px;
+  }
+  .camera-bar {
+    padding: 3px;
+  }
+  .camera-bar button {
+    padding: 8px;
+    font-size: 10px;
+  }
+  .camera-bar button svg {
+    width: 13px;
+  }
+  .layer-bar {
+    padding: 3px;
+  }
+  .layer-bar select {
+    width: 94px;
+    font-size: 10px;
+    padding: 8px 4px;
+  }
+  .stage-scale {
+    font-size: 8px;
+    left: 12px;
+    bottom: 9px;
+  }
+  .simulation-controls {
+    gap: 9px;
+  }
+  .simulation-controls .time-value {
+    font-size: 11px;
+  }
+  .time-value small {
+    font-size: 8px;
+  }
+  .simulation-controls button:last-child {
+    display: none;
+  }
+  .simulation-controls button {
+    padding: 3px;
+  }
+  .simulation-controls select {
+    padding: 3px;
+    font-size: 10px;
+  }
+  .analysis-toolbar {
+    font-size: 10px;
+    gap: 13px;
+  }
+  .analysis-toolbar select {
+    font-size: 9px;
+  }
+  .analysis-toolbar button {
+    font-size: 10px;
+  }
+  .analysis-toolbar label:nth-child(2) {
+    display: none;
+  }
+  .response-panel {
+    padding: 13px 10px;
+  }
+  .chart-header h3 {
+    font-size: 11px;
+  }
+  .chart-header > div > span {
+    font-size: 9px;
+  }
+  .peak-list {
+    gap: 5px;
+  }
+  .app-footer {
+    padding: 12px 15px;
+    font-size: 8px;
+    gap: 15px;
+    flex-wrap: wrap;
+  }
+  .app-footer > span:last-child {
+    display: none;
+  }
+  .floating-structure {
+    width: 175px;
+    right: 10px;
+    top: 73px;
+    padding: 10px;
+  }
+  .floating-structure .help {
+    font-size: 9px;
+  }
+  .part-popover {
+    right: 12px;
+    width: 190px;
+  }
+  .research-records > div:first-child {
+    flex-wrap: wrap;
+  }
+  .research-records h2 {
+    font-size: 14px;
+    width: 100%;
+  }
+  .record-row {
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 10px;
+  }
+  .record-row > span:nth-child(3) {
+    display: none;
+  }
+  .media-tools {
+    gap: 10px;
+  }
+  .media-tools label {
+    font-size: 10px;
+  }
+  .media-tools button {
+    font-size: 10px;
+  }
+  .media-overlay {
+    left: 40%;
+    right: 10px;
+  }
+  .presentation-controls {
+    max-width: 96vw;
+    overflow: auto;
+    gap: 3px;
+  }
+  .presentation-controls button {
+    font-size: 9px;
+    padding: 8px 5px;
+  }
+  .presenting .stage-top {
+    top: 18px;
+    left: 15px;
+    right: 15px;
+  }
+  .paint-hint {
+    font-size: 10px;
+    padding: 8px;
+    top: 83px;
+    white-space: normal;
+    min-width: 210px;
+  }
+  .check {
+    font-size: 12px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+.physical-legend {
+  position: absolute;
+  right: 16px;
+  bottom: 104px;
+  width: 160px;
+  color: #e0e7ec;
+  font-size: 10px;
+  text-align: right;
+  pointer-events: none;
+}
+.physical-legend i {
+  display: block;
+  height: 4px;
+  width: 100%;
+  margin-top: 8px;
+  background: linear-gradient(90deg, #31566a, #d7b170);
+  border: 1px solid #e0e7ec20;
+  border-radius: 3px;
+}

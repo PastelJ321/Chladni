@@ -1,0 +1,141 @@
+.simulation-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 0;
+  border-bottom: 1px solid #d3dade;
+}
+.simulation-controls button {
+  border: 0;
+  padding: 7px;
+  background: transparent;
+  font-size: 11px;
+}
+.simulation-controls .play-control {
+  background: #416783;
+  color: #fff;
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+}
+.simulation-controls .time-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: #3b505f;
+  white-space: nowrap;
+}
+.time-value small {
+  font-size: 10px;
+  color: #8a969e;
+}
+.simulation-controls > input {
+  flex: 1;
+}
+.simulation-controls select {
+  border: 0;
+  background: none;
+  font-size: 11px;
+  padding: 4px;
+}
+.simulation-controls button.active {
+  background: #d8e4eb;
+  color: #3f647c;
+}
+.analysis-toolbar {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  padding: 13px 0;
+  font-size: 10px;
+  color: #71818c;
+  flex-wrap: wrap;
+}
+.analysis-toolbar label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.analysis-toolbar input[type='range'] {
+  width: 78px;
+}
+.analysis-toolbar button {
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  font-size: 10px;
+}
+.analysis-toolbar select {
+  background: none;
+  border: 0;
+  padding: 3px;
+  font-size: 10px;
+  margin-left: auto;
+}
+.response-panel {
+  background: #fbfcfb;
+  border: 1px solid #d9dfe3;
+  border-radius: 8px;
+  margin: 0 0 18px;
+  padding: 16px 18px 13px;
+}
+.chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.chart-header h3 {
+  font-size: 12px;
+  color: #445664;
+  margin-bottom: 5px;
+}
+.chart-header > div > span {
+  font-size: 10px;
+  color: #95a0a8;
+}
+.source-tag {
+  display: inline-block;
+  color: #5d7b8e;
+  background: #e9f0f4;
+  border: 1px solid #d8e3ea;
+  border-radius: 4px;
+  padding: 3px 5px;
+  font-size: 9px;
+  white-space: nowrap;
+}
+.source-tag.warm {
+  color: #91714e;
+  background: #f4efe6;
+  border-color: #e8dfd1;
+}
+.response-chart {
+  display: block;
+  width: 100%;
+  max-height: 160px;
+  margin-top: 9px;
+  cursor: crosshair;
+}
+.response-chart text {
+  font-size: 9px;
+  fill: #8a979f;
+  font-family: Plex, sans-serif;
+}
+.peak-list {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  min-height: 25px;
+  font-size: 10px;
+  color: #8b989f;
+}
+.peak-list > span:first-child {
+  margin-right: 4px;
+}
+.peak-list button {
+  font-size: 10px;
+  padding: 4px 7px;
+  background: #edf2f4;
+  border-color: #dce5ea;
+  color: #53738a;
+}

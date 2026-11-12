@@ -1,1184 +1,870 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowDownToLine,
-  ArrowLeft,
-  ArrowRight,
   Camera,
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Expand,
-  Eye,
-  Focus,
-  Layers3,
-  Maximize,
-  Minus,
+  Download,
+  Maximize2,
   Pause,
   Play,
   RotateCcw,
-  SlidersHorizontal,
-  VolumeX,
+  Square,
   X,
+  Layers,
+  SlidersHorizontal,
+  FlaskConical,
+  ChartNoAxesCombined,
+  BookOpen,
+  Presentation,
+  ChevronRight,
 } from 'lucide-react';
-import Viewport from './components/Viewport';
-import ModePreview from './components/ModePreview';
-import {
-  CAUSAL_LABELS,
-  DURATION,
-  INITIAL_STATE,
-  MODES,
-  PARTS,
-  VIEWS,
-  type Category,
-  type CompareKind,
-  type PartId,
-  type SceneState,
-  type ViewId,
-} from './model/catalog';
-import { response } from './model/physics';
-import type { SceneController } from './scene/SceneController';
+import { useExperiment } from './experiment/useExperiment';
+import { DEFAULT_VIEW, cloneConfig } from './experiment/config';
+import type { Field, ViewSettings, Workspace } from './experiment/types';
+import { ConfigurationPanel } from './ui/ConfigurationPanel';
+import { AnalysisPanel } from './ui/AnalysisPanel';
+import { ResponsePlot, type MeasuredPoint } from './ui/ResponsePlot';
+import { StructureTools } from './ui/StructureTools';
+import { LabViewport } from './render/LabViewport';
+import { LabRenderer, type RenderData } from './render/LabRenderer';
+import { layerLabels } from './render/layers';
+import { responseField } from './solver/response';
+import { sampleMode } from './solver/modal';
+import { decodeSession, download, encodeSession, particlesCSV, sweepCSV } from './io/session';
+import { PARTS } from './concept/catalog';
+import { densityGrid } from './analysis/metrics';
+import { fieldAtRun } from './simulation/particles';
 
-const CATEGORY_LABELS: Record<Category, string> = {
-  explore: '장비 탐색',
-  analyze: '현상 분석',
-  compare: '실험 비교',
-};
-const DEMO = [
-  { view: 'hero', camera: 'hero', label: '장비를 만나다', duration: 7 },
-  { view: 'exploded', camera: 'hero', label: '구조를 펼치다', duration: 7 },
-  { view: 'assembly', camera: 'hero', label: '중앙으로 이어지는 구동', duration: 12 },
-  { view: 'mechanism', camera: 'hero', label: '진동의 전달', duration: 7 },
-  { view: 'motion', camera: 'hero', label: '마디와 배', duration: 8 },
-  { view: 'trace', camera: 'top', label: '입자가 남기는 경로', duration: 10 },
-  { view: 'hero', camera: 'macro', label: '고요한 곳에 남은 입자', duration: 7 },
-] as const;
-
-function download(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
+const spaces: { id: Workspace; label: string; icon: typeof Camera }[] = [
+  { id: 'design', label: '실험 설계', icon: SlidersHorizontal },
+  { id: 'simulate', label: '가상실험', icon: FlaskConical },
+  { id: 'analyze', label: '결과 분석', icon: ChartNoAxesCombined },
+  { id: 'structure', label: '장비 구조', icon: Layers },
+  { id: 'records', label: '연구 기록', icon: BookOpen },
+  { id: 'present', label: '발표', icon: Presentation },
+];
 export default function App() {
-  const [state, setState] = useState<SceneState>(() => ({
-    ...INITIAL_STATE,
-    reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
-  }));
-  const [category, setCategory] = useState<Category>('explore');
-  const [ready, setReady] = useState(false);
-  const [error, setError] = useState('');
-  const [clean, setClean] = useState(false);
-  const [presentation, setPresentation] = useState(false);
-  const [inspectorTab, setInspectorTab] = useState<'settings' | 'parts'>('settings');
-  const [info, setInfo] = useState(false);
-  const [toast, setToast] = useState('');
-  const [mobilePanel, setMobilePanel] = useState<'views' | 'settings' | null>(null);
-  const [media, setMedia] = useState<{ url: string; name: string; type: string } | null>(null);
-  const [recordFrequency, setRecordFrequency] = useState('');
-  const [demoStep, setDemoStep] = useState(-1);
-  const [demoPaused, setDemoPaused] = useState(false);
-  const controller = useRef<SceneController | null>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const dialog = useRef<HTMLDialogElement>(null);
-  const mediaRef = useRef(media);
-  const demoElapsed = useRef(0);
-  const demoSnapshot = useRef<SceneState | null>(null);
-  const selectedView = VIEWS.find((v) => v.id === state.view)!;
-  const mode = MODES[state.modeIndex];
-  const isSplit = state.view === 'compare' || state.view === 'before';
-  const set = useCallback(
-    (patch: Partial<SceneState>) => setState((s) => ({ ...s, ...patch })),
-    [],
+  const e = useExperiment(),
+    [space, setSpace] = useState<Workspace>('design'),
+    [view, setView] = useState<ViewSettings>(DEFAULT_VIEW),
+    [paint, setPaint] = useState(false),
+    [animate, setAnimate] = useState(false),
+    [comparison, setComparison] = useState(''),
+    [toast, setToast] = useState(''),
+    [mobile, setMobile] = useState(false),
+    [about, setAbout] = useState(false);
+  const [media, setMedia] = useState<{ url: string; name: string; type: string } | null>(null),
+    [opacity, setOpacity] = useState(0.6),
+    [sync, setSync] = useState(false),
+    [offset, setOffset] = useState(0),
+    [measuredHz, setMeasuredHz] = useState(''),
+    [measured, setMeasured] = useState<MeasuredPoint[]>([]),
+    [measuredName, setMeasuredName] = useState('');
+  const api = useRef<LabRenderer | null>(null),
+    sessionInput = useRef<HTMLInputElement>(null),
+    mediaInput = useRef<HTMLInputElement>(null),
+    csvInput = useRef<HTMLInputElement>(null),
+    video = useRef<HTMLVideoElement>(null),
+    savedView = useRef(view),
+    configRef = useRef(e.config),
+    dialog = useRef<HTMLDialogElement>(null);
+  configRef.current = e.config;
+  const previousSpace = useRef<Workspace>('simulate'),
+    pose = useRef<ReturnType<LabRenderer['rig']['pose']> | null>(null),
+    [bookmark, setBookmark] = useState<ReturnType<LabRenderer['rig']['pose']> | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(''), 3500);
+    return () => clearTimeout(t);
+  }, [toast]);
+  useEffect(() => {
+    if (about) dialog.current?.showModal();
+    else dialog.current?.close();
+  }, [about]);
+  useEffect(
+    () => () => {
+      if (media) URL.revokeObjectURL(media.url);
+    },
+    [media],
   );
-  const selectPart = useCallback((id: PartId | null) => {
-    setState((s) => ({ ...s, selectedPart: s.selectedPart === id ? null : id }));
-    if (id) setInspectorTab('parts');
-  }, []);
-  const onReady = useCallback(() => setReady(true), []);
-  const onError = useCallback((message: string) => setError(message), []);
-
-  const chooseView = useCallback((id: ViewId) => {
-    const view = VIEWS.find((v) => v.id === id)!;
-    setCategory(view.category);
-    setState((s) => ({
-      ...s,
-      view: id,
-      selectedPart: null,
-      playing: false,
-      time: id === 'assembly' || id === 'causal' ? 0 : s.time,
-      camera: ['mode', 'heatmap', 'contour', 'trace', 'vector', 'compare', 'before'].includes(id)
-        ? 'top'
-        : id === 'section'
-          ? 'section'
-          : 'hero',
-      cameraRevision: s.cameraRevision + 1,
-    }));
-    setMobilePanel(null);
-  }, []);
-
-  function endDemo() {
-    setDemoStep(-1);
-    setDemoPaused(false);
-    setPresentation(false);
-    if (demoSnapshot.current) {
-      setState(demoSnapshot.current);
-      setCategory(VIEWS.find((v) => v.id === demoSnapshot.current!.view)!.category);
+  useEffect(() => {
+    if (sync && video.current && Number.isFinite(video.current.duration))
+      video.current.currentTime = Math.max(0, Math.min(video.current.duration, e.time + offset));
+  }, [e.time, offset, sync]);
+  useEffect(() => {
+    if (space !== 'structure' || view.structure !== 'assembly' || !animate) return;
+    const t = setInterval(
+      () => setView((v) => ({ ...v, assembly: Math.min(1, v.assembly + 0.015 * e.speed) })),
+      50,
+    );
+    return () => clearInterval(t);
+  }, [space, view.structure, animate, e.speed]);
+  function changeSpace(s: Workspace) {
+    if (s === 'present') {
+      savedView.current = view;
+      previousSpace.current = space;
+      pose.current = api.current?.rig.pose() ?? null;
+      setAnimate(false);
+    } else if (space === 'present') {
+      setView(savedView.current);
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (pose.current) api.current?.rig.restore(pose.current);
+        }),
+      );
     }
-    if (document.fullscreenElement) void document.exitFullscreen();
+    setSpace(s);
+    setMobile(false);
   }
-
   useEffect(() => {
-    if (!state.playing || demoStep >= 0) return;
-    let last = performance.now();
-    const timer = window.setInterval(() => {
-      if (document.hidden) {
-        last = performance.now();
-        return;
+    const handler = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') {
+        if (space === 'present') changeSpace(previousSpace.current);
+        setMobile(false);
       }
-      const now = performance.now(),
-        delta = Math.min(0.15, (now - last) / 1000);
-      last = now;
-      setState((s) => {
-        const next = s.time + delta * s.speed;
-        return { ...s, time: Math.min(DURATION, next), playing: next < DURATION };
-      });
-    }, 50);
-    return () => clearInterval(timer);
-  }, [state.playing, state.speed, demoStep]);
-
-  useEffect(() => {
-    if (demoStep < 0) return;
-    const step = DEMO[demoStep];
-    setState((s) => ({
-      ...s,
-      view: step.view,
-      camera: step.camera,
-      cameraRevision: s.cameraRevision + 1,
-      time: step.view === 'assembly' || step.view === 'trace' ? 0 : 9,
-      playing: true,
-      annotations: step.view === 'exploded',
-    }));
-    setCategory(VIEWS.find((v) => v.id === step.view)!.category);
-    demoElapsed.current = 0;
-  }, [demoStep]);
-
-  useEffect(() => {
-    if (demoStep < 0 || demoPaused) return;
-    let last = performance.now();
-    const timer = window.setInterval(() => {
-      if (document.hidden) {
-        last = performance.now();
-        return;
+      if ((ev.target as HTMLElement).matches('input,select,textarea,button') || about) return;
+      if (ev.code === 'Space') {
+        ev.preventDefault();
+        if (e.run) e.setPlaying(!e.playing);
       }
-      const now = performance.now(),
-        delta = Math.min(0.15, (now - last) / 1000);
-      last = now;
-      demoElapsed.current += delta;
-      setState((s) => ({
-        ...s,
-        time: Math.min(DURATION, s.time + delta * (s.view === 'motion' ? 0.25 : 1)),
-      }));
-      if (demoElapsed.current >= DEMO[demoStep].duration) {
-        if (demoStep === DEMO.length - 1) {
-          setDemoStep(-1);
-          setPresentation(false);
-          setState((s) => ({ ...s, view: 'hero', camera: 'hero', playing: false }));
-          setCategory('explore');
-        } else setDemoStep((v) => v + 1);
-      }
-    }, 50);
-    return () => clearInterval(timer);
-  }, [demoStep, demoPaused]);
-
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (dialog.current?.open) return;
-      if (event.key === 'Escape') {
-        setClean(false);
-        setPresentation(false);
-        setMobilePanel(null);
-        if (demoStep >= 0) endDemo();
-        return;
-      }
-      if ((event.target as HTMLElement).matches('input, select, textarea, button')) return;
-      if (event.code === 'Space') {
-        event.preventDefault();
-        if (demoStep >= 0) setDemoPaused((p) => !p);
-        else
-          setState((s) => ({ ...s, time: s.time >= DURATION ? 0 : s.time, playing: !s.playing }));
-      }
-      if (event.key.toLowerCase() === 'c') setClean((v) => !v);
-      if (event.key.toLowerCase() === 'r')
-        setState((s) => ({ ...s, camera: 'hero', cameraRevision: s.cameraRevision + 1 }));
-      if (event.key === 'ArrowRight' || event.key === 'ArrowLeft')
-        setState((s) => ({
-          ...s,
-          playing: false,
-          time: Math.max(
-            0,
-            Math.min(DURATION, s.time + (event.key === 'ArrowRight' ? 0.25 : -0.25)),
-          ),
-        }));
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   });
-
-  useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => setToast(''), 3200);
-    return () => clearTimeout(timer);
-  }, [toast]);
-  useEffect(() => {
-    mediaRef.current = media;
-  }, [media]);
-  useEffect(
-    () => () => {
-      if (mediaRef.current) URL.revokeObjectURL(mediaRef.current.url);
-    },
-    [],
-  );
-  useEffect(() => {
-    if (info) dialog.current?.showModal();
-    else dialog.current?.close();
-  }, [info]);
-  useEffect(() => {
-    const handler = () => {
-      if (!document.fullscreenElement && demoStep < 0) setPresentation(false);
-    };
-    document.addEventListener('fullscreenchange', handler);
-    return () => document.removeEventListener('fullscreenchange', handler);
-  }, [demoStep]);
-
-  function startDemo() {
-    demoSnapshot.current = state;
-    setState({ ...INITIAL_STATE, reducedMotion: state.reducedMotion });
-    setPresentation(true);
-    setClean(false);
-    setDemoPaused(false);
-    setDemoStep(0);
-  }
-  async function fullscreen() {
-    try {
-      if (document.fullscreenElement) {
-        await document.exitFullscreen();
-        setPresentation(false);
-      } else {
-        await document.documentElement.requestFullscreen();
-        setPresentation(true);
-      }
-    } catch {
-      setPresentation((v) => !v);
-      setToast('이 브라우저에서는 화면 내 발표 모드를 사용합니다.');
-    }
-  }
-  async function capture() {
-    const blob = await controller.current?.capture();
-    if (blob) {
-      download(blob, `quadraj-chladni-${state.view}-${mode.id}.png`);
-      setToast('3D 장면을 PNG로 저장했습니다.');
-    } else setToast('장면을 저장하지 못했습니다. 다시 시도해 주세요.');
-  }
-  function exportSettings() {
-    download(
-      new Blob(
-        [
-          JSON.stringify(
-            {
-              schema: 'quadraj-chladni/1',
-              model: 'analytic-surrogate',
-              calibrated: false,
-              state,
-              experiment: media
-                ? {
-                    name: media.name,
-                    frequencyHz: recordFrequency ? Number(recordFrequency) : null,
-                  }
-                : null,
-            },
-            null,
-            2,
+  const displayField = useMemo(() => {
+    if (!view.showMode || !e.modal) return e.run ? fieldAtRun(e.run, e.time) : e.field;
+    const size = 41,
+      real: number[] = [];
+    for (let y = 0; y < size; y++)
+      for (let x = 0; x < size; x++)
+        real.push(
+          sampleMode(
+            e.modal,
+            Math.min(view.mode, e.modal.frequencies.length - 1),
+            x / (size - 1),
+            y / (size - 1),
           ),
-        ],
-        { type: 'application/json' },
-      ),
-      'chladni-session.json',
-    );
-    setToast('현재 조건을 JSON으로 저장했습니다.');
+        );
+    const peak = Math.max(...real.map(Math.abs));
+    return {
+      source: 'FEM',
+      key: e.modal.key,
+      size,
+      real: real.map((v) => (v / peak) * 1e-6),
+      imag: real.map(() => 0),
+      amplitude: real.map((v) => Math.abs(v / peak) * 1e-6),
+      peak: 1e-6,
+      frequency: e.modal.frequencies[view.mode],
+    } as Field;
+  }, [
+    view.showMode,
+    view.mode,
+    e.modal,
+    e.field,
+    e.run,
+    e.time,
+    e.config.drive.signal,
+    e.config.drive.duration,
+  ]);
+  const units = view.layer === 'velocity' ? 'm/s' : view.layer === 'acceleration' ? 'm/s²' : 'µm';
+  const legendMax = displayField
+    ? displayField.peak *
+      (view.layer === 'velocity'
+        ? 2 * Math.PI * displayField.frequency
+        : view.layer === 'acceleration'
+          ? (2 * Math.PI * displayField.frequency) ** 2
+          : 1e6)
+    : 0;
+  const densityMax =
+    view.layer === 'density'
+      ? Math.max(
+          0,
+          ...densityGrid(
+            e.run
+              ? e.run.frames[Math.min(e.run.frames.length - 1, Math.round(e.time / 0.05))].positions
+              : [],
+          ),
+        )
+      : 0;
+  const compareRecord = e.records.find((r) => r.id === comparison);
+  const compareField = useMemo(
+    () => (compareRecord ? responseField(compareRecord.modal, compareRecord.config) : null),
+    [compareRecord],
+  );
+  const base: RenderData = {
+    config: e.config,
+    modal: e.modal,
+    field: displayField,
+    run: e.run,
+    time: e.time,
+    view,
+    animate,
+    paint,
+  };
+  const renderData: RenderData =
+    comparison === 'before' && e.run
+      ? { ...base, time: 0, compare: { ...base, time: e.time } }
+      : compareRecord
+        ? {
+            ...base,
+            compare: {
+              ...base,
+              config: compareRecord.config,
+              modal: compareRecord.modal,
+              field: compareRecord.run
+                ? fieldAtRun(
+                    compareRecord.run,
+                    Math.min(e.time, compareRecord.config.drive.duration),
+                  )
+                : compareField,
+              run: compareRecord.run,
+              time: Math.min(e.time, compareRecord.config.drive.duration),
+            },
+          }
+        : base;
+  const onPaint = (point: [number, number]) => {
+    const c = cloneConfig(configRef.current);
+    c.grains.distribution = 'paint';
+    c.grains.spots = [...c.grains.spots, point].slice(-200);
+    e.change(c);
+  };
+  async function capture() {
+    const blob = await api.current?.capture();
+    if (blob) {
+      download(blob, 'chladni-v02.png');
+      setToast('3D 장면 PNG 저장 완료');
+    }
   }
-  function importRecord(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+  async function loadSession(file?: File) {
     if (!file) return;
-    if (!/^(image\/(png|jpeg|webp)|video\/(mp4|webm|quicktime))$/.test(file.type)) {
-      setToast('JPG, PNG, WebP 이미지 또는 MP4, WebM, MOV 영상을 선택해 주세요.');
-      return;
+    try {
+      if (file.size > 60 * 1024 * 1024) throw Error('60 MB 이하의 세션을 선택하세요.');
+      const data = decodeSession(await file.text());
+      if (data.active) e.loadRecord(data.active);
+      else e.change(data.config);
+      e.setRecords(data.records);
+      setToast('세션을 불러왔습니다. 판 해석으로 장을 갱신하세요.');
+    } catch (err) {
+      setToast(String(err));
     }
-    if (file.size > 250 * 1024 * 1024) {
-      setToast('250 MB 이하의 기록을 선택해 주세요.');
-      return;
-    }
-    if (media) URL.revokeObjectURL(media.url);
-    setMedia({ url: URL.createObjectURL(file), name: file.name, type: file.type });
-    set({ compareKind: 'experiment' });
-    event.target.value = '';
   }
-  const togglePart = (id: PartId) =>
-    setState((s) => ({
-      ...s,
-      particles: id === 'particles' ? !s.particles : s.particles,
-      hiddenParts:
-        id === 'particles'
-          ? s.hiddenParts.filter((p) => p !== id)
-          : s.hiddenParts.includes(id)
-            ? s.hiddenParts.filter((p) => p !== id)
-            : [...s.hiddenParts, id],
-    }));
-  const isPartHidden = (id: PartId) =>
-    id === 'particles' ? !state.particles : state.hiddenParts.includes(id);
-  const togglePlayback = () =>
-    setState((s) => ({ ...s, time: s.time >= DURATION ? 0 : s.time, playing: !s.playing }));
-
+  function loadMedia(file?: File) {
+    if (!file) return;
+    if (
+      !/^(image\/(png|jpeg|webp)|video\/(mp4|webm|quicktime))$/.test(file.type) ||
+      file.size > 250 * 1024 * 1024
+    ) {
+      setToast('250 MB 이하 이미지 또는 영상을 선택하세요.');
+      return;
+    }
+    setMedia({ url: URL.createObjectURL(file), name: file.name, type: file.type });
+  }
+  async function loadMeasured(file?: File) {
+    if (!file) return;
+    try {
+      const rows = (await file.text()).trim().split(/\r?\n/);
+      if (rows[0].replace(/\s/g, '') !== 'frequency_hz,amplitude_um')
+        throw Error('CSV 헤더: frequency_hz,amplitude_um');
+      const points = rows
+        .slice(1)
+        .map((row) => {
+          const [f, a] = row.split(',').map(Number);
+          if (!Number.isFinite(f) || !Number.isFinite(a) || f <= 0 || a < 0)
+            throw Error('실측 CSV 수치를 확인하세요.');
+          return { frequency: f, amplitude: a * 1e-6 };
+        })
+        .sort((a, b) => a.frequency - b.frequency);
+      setMeasured(points);
+      setMeasuredName(file.name);
+    } catch (err) {
+      setToast(String(err));
+    }
+  }
+  function extractFrame() {
+    const v = video.current;
+    if (!v) return;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = v.videoWidth;
+      canvas.height = v.videoHeight;
+      canvas.getContext('2d')?.drawImage(v, 0, 0);
+      canvas.toBlob((b) => {
+        if (b) download(b, `measured-frame-${v.currentTime.toFixed(2)}s.png`);
+      });
+    } catch {
+      setToast('이 영상의 프레임을 읽을 수 없습니다.');
+    }
+  }
   return (
-    <div className={`app ${clean ? 'is-clean' : ''} ${presentation ? 'is-presenting' : ''}`}>
-      <header className="topbar chrome">
-        <div className="brand">
-          <span className="brand-mark">
-            Q<span>J</span>
-          </span>
-          <span>
-            QuadraJ<span className="brand-sub">RESEARCH / INTERACTIVE</span>
-          </span>
+    <div className={`laboratory ${space === 'present' ? 'presenting' : ''}`}>
+      <header className="app-header">
+        <div className="wordmark">
+          Chladni <span>0.2</span>
+          <small>by QuadraJ</small>
         </div>
-        <div className="project-path">
-          <span className="path-line" /> <span>Chladni</span>
-          <span className="version">01</span>
+        <div className="project-name">
+          사각 진동판 실험<span>로컬 세션</span>
         </div>
-        <nav className="workspace-tabs" aria-label="작업 공간">
-          {(Object.keys(CATEGORY_LABELS) as Category[]).map((cat) => (
-            <button
-              key={cat}
-              className={category === cat ? 'active' : ''}
-              onClick={() => {
-                setCategory(cat);
-                chooseView(cat === 'explore' ? 'hero' : cat === 'analyze' ? 'mode' : 'compare');
-              }}
-            >
-              {CATEGORY_LABELS[cat]}
-            </button>
-          ))}
-        </nav>
-        <div className="header-actions">
-          <button className="text-button about-button" onClick={() => setInfo(true)}>
-            모델 안내
+        <div className="file-actions">
+          <button onClick={() => sessionInput.current?.click()}>불러오기</button>
+          <button
+            onClick={() =>
+              download(encodeSession(e.config, e.records, e.snapshot()), 'chladni-session-v2.json')
+            }
+          >
+            <Download size={14} />
+            JSON 저장
           </button>
-          <button className="presentation-button" onClick={startDemo}>
-            <Play size={12} fill="currentColor" /> 데모 재생
-          </button>
+          <button onClick={() => setAbout(true)}>모델 안내</button>
         </div>
       </header>
-
-      <div className="workspace">
-        <aside
-          className={`view-sidebar chrome ${mobilePanel === 'views' ? 'mobile-open' : ''}`}
-          aria-label="시각화 뷰 선택"
-        >
-          <div className="sidebar-heading">
-            <span className="eyebrow">OBSERVATION</span>
-            <button
-              className="mobile-close icon-button"
-              aria-label="뷰 메뉴 닫기"
-              onClick={() => setMobilePanel(null)}
-            >
-              <X size={15} />
-            </button>
-          </div>
-          <h2>시각화 보기</h2>
-          <div className="view-list">
-            {VIEWS.filter((v) => v.category === category).map((view, i) => (
-              <button
-                className={`view-item ${state.view === view.id ? 'active' : ''}`}
-                key={view.id}
-                onClick={() => chooseView(view.id)}
-                aria-pressed={state.view === view.id}
-              >
-                <span className="view-index">{String(i + 1).padStart(2, '0')}</span>
-                <span>
-                  {view.label}
-                  <small>{view.english}</small>
-                </span>
-                <ChevronRight size={13} />
-              </button>
-            ))}
-          </div>
-          <div className="sidebar-bottom">
-            <span className="tiny-rule" />
-            <span className="eyebrow">PLATE STUDY / 01</span>
-            <p>
-              사각 진동판
-              <br />
-              중앙 구동 / 자유 가장자리
-            </p>
-            <button onClick={() => setInfo(true)}>
-              실험과 모델에 관하여 <ArrowRight size={12} />
-            </button>
-          </div>
-        </aside>
-
-        <main className={`stage ${isSplit ? 'split-stage' : ''}`} aria-label="실험 시각화">
-          <Viewport
-            state={state}
-            controller={controller}
-            onSelect={selectPart}
-            onReady={onReady}
-            onError={onError}
-          />
-          <div className="stage-grain" />
-          <div className="scene-heading chrome">
-            <div className="eyebrow">
-              <span className="status-dot" /> CHLADNI / PARTICLE STUDIES
-            </div>
-            <h1>
-              {state.view === 'hero' ? (
-                <>
-                  Chladni<span>patterns.</span>
-                </>
-              ) : (
-                selectedView.english
-              )}
-            </h1>
-            <p>{state.view === 'hero' ? '클라드니 패턴과 입자 이동' : selectedView.description}</p>
-          </div>
-          <div className="scene-status chrome">
-            <span className="model-badge">ANALYTIC MODEL</span>
-            <span>중앙 구동 · 자유 가장자리</span>
-          </div>
-
-          {!ready && !error && (
-            <div className="loading-state" role="status">
-              <div className="loader" />
-              실험 장면을 준비하는 중
-            </div>
-          )}
-          {error && (
-            <div className="error-state" role="alert">
-              <h2>3D 장면을 열 수 없습니다</h2>
-              <p>{error}</p>
-              <button onClick={() => location.reload()}>다시 열기</button>
-            </div>
-          )}
-
-          {state.view === 'compare' && state.compareKind === 'experiment' && (
-            <div className="experiment-record" style={{ left: `${state.split}%` }}>
-              {media ? (
-                <>
-                  {media.type.startsWith('video/') ? (
-                    <video
-                      key={media.url}
-                      src={media.url}
-                      controls
-                      playsInline
-                      aria-label="업로드한 실험 영상"
-                    />
-                  ) : (
-                    <img src={media.url} alt={`실제 실험 기록: ${media.name}`} />
-                  )}
-                  <div className="record-caption">
-                    {media.name}
-                    {recordFrequency && ` · ${recordFrequency} Hz`}
-                  </div>
-                </>
-              ) : (
-                <div className="upload-empty">
-                  <span className="upload-cross">＋</span>
-                  <h3>실험 기록을 나란히</h3>
-                  <p>위에서 촬영한 사진이나 영상을 불러오세요.</p>
-                  <button className="secondary-button" onClick={() => fileInput.current?.click()}>
-                    실험 기록 불러오기
-                  </button>
-                  <small>기록은 이 기기에만 머무릅니다.</small>
-                </div>
-              )}
-            </div>
-          )}
-          {isSplit && (
-            <>
-              <div className="split-divider" style={{ left: `${state.split}%` }}>
-                <span>Ⅱ</span>
-              </div>
-              <div className="split-label left">
-                {state.view === 'before' ? '진동 전' : `${state.frequency} Hz · 예시 모델`}
-              </div>
-              <div className="split-label right" style={{ left: `calc(${state.split}% + 22px)` }}>
-                {state.view === 'before'
-                  ? '패턴 형성 후'
-                  : state.compareKind === 'experiment'
-                    ? '실제 실험 기록'
-                    : state.compareKind === 'inverse'
-                      ? '역 패턴 · 개념 모델'
-                      : `${MODES[state.compareModeIndex].frequency} Hz · 예시 모델`}
-              </div>
-            </>
-          )}
-
-          {['heatmap', 'mode', 'motion', 'contour'].includes(state.view) && (
-            <div className="field-legend chrome">
-              <div className={`legend-ramp ${state.view === 'heatmap' ? '' : 'signed'}`} />
-              <span>{state.view === 'heatmap' ? '0' : '−1'}</span>
-              <span>
-                {state.view === 'contour'
-                  ? '정규화 진폭 |φ|'
-                  : state.view === 'heatmap'
-                    ? '정규화 진폭 |φ|'
-                    : '정규화 변위 φ'}
+      <nav className="workspace-nav" aria-label="작업 공간">
+        {spaces.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            aria-current={space === id ? 'page' : undefined}
+            onClick={() => changeSpace(id)}
+          >
+            <Icon size={16} />
+            {label}
+          </button>
+        ))}
+        <span className="nav-detail">
+          BFS / Kirchhoff–Love <span>판 FEM · 입자 근사</span>
+        </span>
+      </nav>
+      <div className="lab-layout">
+        <div className={`settings-slot ${mobile ? 'mobile-open' : ''}`}>
+          <button className="close-mobile" onClick={() => setMobile(false)} aria-label="설정 닫기">
+            <X size={18} />
+          </button>
+          <ConfigurationPanel e={e} paint={paint} setPaint={setPaint} />
+        </div>
+        <main className="experiment-main">
+          <div className="experiment-toolbar">
+            <div>
+              <span className="breadcrumb">
+                실험 01 <ChevronRight size={12} /> {spaces.find((s) => s.id === space)?.label}
               </span>
-              <span>+1</span>
+              <h1>
+                {space === 'design'
+                  ? '실험을 구성하세요'
+                  : space === 'simulate'
+                    ? '진동과 입자 운동'
+                    : space === 'analyze'
+                      ? '계산 결과 분석'
+                      : space === 'structure'
+                        ? '장비의 연결 구조'
+                        : space === 'records'
+                          ? '기록과 실측 비교'
+                          : '실험 발표'}
+              </h1>
             </div>
-          )}
-          {['motion', 'mode'].includes(state.view) && (
-            <span className="amplification-label chrome">변위 과장 · 0.65 Hz로 느리게 재생</span>
-          )}
-          {state.view === 'causal' && (
-            <div className="causal-steps chrome">
-              {CAUSAL_LABELS.map((label, i) => (
-                <button
-                  key={label}
-                  className={Math.min(4, Math.floor(state.time / 2.4)) === i ? 'active' : ''}
-                  onClick={() => set({ time: i * 2.4, playing: false })}
-                >
-                  <span>0{i + 1}</span>
-                  {label}
-                </button>
-              ))}
+            <div className="toolbar-actions">
+              <button className="mobile-settings" onClick={() => setMobile(true)}>
+                실험 조건
+              </button>
+              <button
+                disabled={!e.modal || !e.sweep || e.busy}
+                onClick={() => {
+                  e.saveRecord();
+                  setToast('조건과 계산 결과를 세션에 기록했습니다.');
+                }}
+              >
+                실험 기록
+              </button>
+              <button
+                className="primary"
+                disabled={!e.modal || !e.field || e.busy}
+                onClick={e.simulate}
+              >
+                <FlaskConical size={14} />
+                입자 실험 실행
+              </button>
             </div>
-          )}
-
-          <div className="camera-tools glass chrome" role="group" aria-label="카메라 시점">
-            <button
-              className={state.camera === 'hero' ? 'active' : ''}
-              onClick={() => set({ camera: 'hero', cameraRevision: state.cameraRevision + 1 })}
-              title="장비 전경"
-            >
-              <Focus size={15} />
-              <span>전경</span>
-            </button>
-            <button
-              className={state.camera === 'top' ? 'active' : ''}
-              onClick={() => set({ camera: 'top', cameraRevision: state.cameraRevision + 1 })}
-              title="수직 시점"
-            >
-              <Layers3 size={15} />
-              <span>수직</span>
-            </button>
-            <button
-              className={state.camera === 'macro' ? 'active' : ''}
-              onClick={() => set({ camera: 'macro', cameraRevision: state.cameraRevision + 1 })}
-              title="접사"
-            >
-              <Camera size={15} />
-              <span>접사</span>
-            </button>
-            <span className="tool-separator" />
-            <button onClick={capture} title="장면 PNG 저장" aria-label="장면 PNG 저장">
-              <ArrowDownToLine size={15} />
-            </button>
           </div>
-          <div className="stage-caption chrome">
-            <span>Al / 300 × 300 mm</span>
-            <span>설계 치수</span>
-          </div>
-          <div className="orbit-hint chrome">
-            <span className="orbit-circle" />
-            드래그로 회전 <span>·</span> 스크롤로 확대
-          </div>
-          <div className="stage-actions chrome">
-            <button
-              className="icon-button"
-              onClick={() => setClean(true)}
-              aria-label="클린 모드"
-              title="클린 모드 · C"
-            >
-              <Eye size={17} />
-            </button>
-            <button
-              className="icon-button"
-              onClick={fullscreen}
-              aria-label="전체 화면 발표 모드"
-              title="전체 화면"
-            >
-              <Expand size={17} />
-            </button>
-          </div>
-          {clean && (
-            <button className="restore-ui glass" onClick={() => setClean(false)}>
-              <Eye size={14} /> 컨트롤 표시 <kbd>C</kbd>
-            </button>
-          )}
-        </main>
-
-        <aside
-          className={`inspector chrome ${mobilePanel === 'settings' ? 'mobile-open' : ''}`}
-          aria-label="실험 설정"
-        >
-          <div className="inspector-tabs">
-            <button
-              className={inspectorTab === 'settings' ? 'active' : ''}
-              onClick={() => setInspectorTab('settings')}
-            >
-              실험 조건
-            </button>
-            <button
-              className={inspectorTab === 'parts' ? 'active' : ''}
-              onClick={() => setInspectorTab('parts')}
-            >
-              구조 · 레이어
-            </button>
-            <button
-              className="mobile-close icon-button"
-              aria-label="설정 닫기"
-              onClick={() => setMobilePanel(null)}
-            >
-              <X size={15} />
-            </button>
-          </div>
-          <div className="inspector-content">
-            {inspectorTab === 'settings' ? (
+          <section className="stage" aria-label="가상 실험실">
+            <LabViewport
+              data={renderData}
+              api={api}
+              onSelect={(id) => setView((v) => ({ ...v, selected: id }))}
+              onPaint={onPaint}
+            />
+            <div className="stage-top">
+              <span className="glass source-chip">
+                {e.modal ? 'FEM 계산 결과' : '설계 미리보기'}
+                <i />
+                {view.showMode ? '고유모드 · 1 µm 정규화' : '강제응답'}
+                {e.run && ' · 입자 근사'}
+              </span>
+              <span className="scene-dimensions">
+                {(e.config.plate.width * 1000).toFixed(0)} ×{' '}
+                {(e.config.plate.height * 1000).toFixed(0)} ×{' '}
+                {(e.config.plate.thickness * 1000).toFixed(1)} mm <span>설계값</span>
+              </span>
+            </div>
+            {paint && (
+              <div className="paint-hint glass">
+                판 위를 클릭해 입자를 뿌리세요 · {e.config.grains.spots.length}개 영역
+              </div>
+            )}
+            {comparison && (
               <>
-                <section className="control-section mode-section">
-                  <div className="section-title">
-                    <span>모드 선택</span>
-                    <span className="eyebrow">
-                      MODE / {String(state.modeIndex + 1).padStart(2, '0')}
-                    </span>
-                  </div>
-                  <div className="mode-grid">
-                    {MODES.map((item, i) => (
-                      <button
-                        key={item.id}
-                        className={`mode-option ${state.modeIndex === i ? 'active' : ''}`}
-                        onClick={() =>
-                          set({
-                            modeIndex: i,
-                            frequency: item.frequency,
-                            time: 9.6,
-                            playing: false,
-                          })
-                        }
-                        aria-label={`모드 ${i + 1}, ${item.frequency} Hz 예시`}
-                        aria-pressed={state.modeIndex === i}
-                      >
-                        <ModePreview modeIndex={i} />
-                        <span>0{i + 1}</span>
-                      </button>
-                    ))}
-                  </div>
-                  <p className="mode-name">
-                    {mode.name}
-                    <span>
-                      φ{mode.m},{mode.n}
-                    </span>
-                  </p>
-                </section>
-                <section className="control-section">
-                  <label className="section-title" htmlFor="frequency">
-                    <span>구동 주파수</span>
-                    <span className="unit">Hz</span>
-                  </label>
-                  <div className="frequency-value">
-                    <input
-                      id="frequency"
-                      type="number"
-                      min="100"
-                      max="1300"
-                      step="1"
-                      value={state.frequency}
-                      onChange={(e) => {
-                        const n = Number(e.target.value);
-                        if (Number.isFinite(n))
-                          set({ frequency: Math.max(100, Math.min(1300, n)) });
-                      }}
-                    />
-                    <span>예시</span>
-                  </div>
+                <div className="compare-divider" />
+                <span className="compare-caption left glass">
+                  {comparison === 'before' ? '초기 상태' : '현재 실험'}
+                </span>
+                <span className="compare-caption right glass">
+                  {comparison === 'before' ? '현재 시점' : compareRecord?.name}
+                </span>
+              </>
+            )}
+            {space === 'structure' && (
+              <div className="floating-structure glass">
+                <StructureTools view={view} setView={setView} />
+              </div>
+            )}
+            {media && space === 'records' && (
+              <div className="media-overlay" style={{ opacity }}>
+                {media.type.startsWith('video/') ? (
+                  <video ref={video} src={media.url} controls playsInline />
+                ) : (
+                  <img src={media.url} alt={`실측 기록 ${media.name}`} />
+                )}
+                <span>
+                  실측 기록 · {media.name} {measuredHz && `${measuredHz} Hz`}
+                </span>
+              </div>
+            )}
+            <div className="stage-bottom">
+              <div className="glass camera-bar">
+                <button
+                  onClick={() => {
+                    setView((v) => ({ ...v, camera: 'hero' }));
+                    api.current?.rig.preset('hero');
+                  }}
+                >
+                  전경
+                </button>
+                <button
+                  onClick={() => {
+                    setView((v) => ({ ...v, camera: 'top' }));
+                    api.current?.rig.preset('top');
+                  }}
+                >
+                  수직
+                </button>
+                <button
+                  onClick={() => {
+                    setView((v) => ({ ...v, camera: 'macro' }));
+                    api.current?.rig.preset('macro');
+                  }}
+                >
+                  접사
+                </button>
+                <span />
+                <button onClick={capture} aria-label="고해상도 PNG 저장">
+                  <Camera size={16} />
+                </button>
+                <button
+                  onClick={() => {
+                    document.documentElement
+                      .requestFullscreen?.()
+                      .catch(() => setToast('화면 내 발표 모드를 사용하세요.'));
+                  }}
+                  aria-label="전체 화면"
+                >
+                  <Maximize2 size={15} />
+                </button>
+              </div>
+              <div className="glass layer-bar">
+                <select
+                  aria-label="시각화 레이어"
+                  value={view.layer}
+                  onChange={(ev) =>
+                    setView({ ...view, layer: ev.target.value as ViewSettings['layer'] })
+                  }
+                >
+                  {Object.entries(layerLabels).map(([v, l]) => (
+                    <option key={v} value={v}>
+                      {l}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            {displayField && view.layer !== 'material' && (
+              <div className="physical-legend">
+                <span>
+                  {view.layer === 'contour'
+                    ? 'Re(u)=0 · |u|=30%,65%'
+                    : view.layer === 'density'
+                      ? `0–${densityMax}개 / 셀`
+                      : `${view.layer === 'displacement' ? '±' : '0–'}${legendMax.toPrecision(3)} ${units}`}
+                </span>
+                <i />
+              </div>
+            )}
+            <div className="stage-scale">
+              표시 배율 ×{view.gain} · {animate ? '연출 0.5 Hz' : '정지 위상'}
+              {view.layer === 'velocity'
+                ? ' · m/s'
+                : view.layer === 'acceleration'
+                  ? ' · m/s²'
+                  : view.layer === 'density'
+                    ? ' · 셀별 입자 수'
+                    : ' · 변위 m'}
+              <br />
+              구동부는 개념 기구 모델
+            </div>
+            {view.selected && (
+              <div className="part-popover glass">
+                <button
+                  onClick={() => setView({ ...view, selected: null })}
+                  aria-label="부품 정보 닫기"
+                >
+                  <X size={13} />
+                </button>
+                <strong>{PARTS.find((p) => p.id === view.selected)?.label ?? view.selected}</strong>
+                <p>{PARTS.find((p) => p.id === view.selected)?.detail}</p>
+              </div>
+            )}
+            {e.busy && (
+              <div className="compute-overlay glass" role="status">
+                {e.status}
+                <progress value={e.progress} max="1" />
+                {Math.round(e.progress * 100)}%<button onClick={e.cancel}>계산 취소</button>
+              </div>
+            )}
+          </section>
+          <div className="simulation-controls">
+            <button
+              className="play-control"
+              disabled={!e.run}
+              aria-label={e.playing ? '일시정지' : '재생'}
+              onClick={() => {
+                if (e.time >= e.config.drive.duration) e.setTime(0);
+                e.setPlaying(!e.playing);
+              }}
+            >
+              {e.playing ? <Pause size={17} /> : <Play size={17} />}
+            </button>
+            <button
+              aria-label="완전 정지"
+              onClick={() => {
+                e.cancel();
+                e.setTime(0);
+              }}
+            >
+              <Square size={14} />
+            </button>
+            <button
+              aria-label="초기화"
+              onClick={() => {
+                e.setPlaying(false);
+                e.setTime(0);
+              }}
+            >
+              <RotateCcw size={14} />
+            </button>
+            <span className="time-value">
+              {e.time.toFixed(2)} <small>/ {e.config.drive.duration.toFixed(1)} s</small>
+            </span>
+            <input
+              aria-label="실험 시간"
+              type="range"
+              min="0"
+              max={e.config.drive.duration}
+              step=".05"
+              value={e.time}
+              disabled={!e.run}
+              onChange={(ev) => {
+                e.setPlaying(false);
+                e.setTime(+ev.target.value);
+              }}
+            />
+            <select
+              aria-label="재생 속도"
+              value={e.speed}
+              onChange={(ev) => e.setSpeed(+ev.target.value)}
+            >
+              {[0.25, 0.5, 1, 2].map((s) => (
+                <option key={s} value={s}>
+                  {s}×
+                </option>
+              ))}
+            </select>
+            <button className={animate ? 'active' : ''} onClick={() => setAnimate(!animate)}>
+              변형 애니메이션
+            </button>
+          </div>
+          <div className="analysis-toolbar">
+            <label>
+              <input
+                type="checkbox"
+                checked={view.particles}
+                onChange={(ev) => setView({ ...view, particles: ev.target.checked })}
+              />{' '}
+              입자 표시
+            </label>
+            <label>
+              변위 확대
+              <input
+                aria-label="변위 확대 배율"
+                type="range"
+                min="0"
+                max="4000"
+                step="50"
+                value={view.gain}
+                onChange={(ev) => setView({ ...view, gain: +ev.target.value })}
+              />
+            </label>
+            <select
+              aria-label="렌더 품질"
+              value={view.quality}
+              onChange={(ev) =>
+                setView({ ...view, quality: ev.target.value as ViewSettings['quality'] })
+              }
+            >
+              <option value="standard">표준 품질</option>
+              <option value="low">저사양 · DPR 1</option>
+            </select>
+            <button
+              disabled={!e.sweep}
+              onClick={() => {
+                if (e.sweep) download(sweepCSV(e.sweep), 'frequency-response.csv', 'text/csv');
+              }}
+            >
+              응답 CSV
+            </button>
+            <button
+              disabled={!e.run}
+              onClick={() => {
+                if (e.run) download(particlesCSV(e.run, e.time), 'particles.csv', 'text/csv');
+              }}
+            >
+              입자 CSV
+            </button>
+          </div>
+          <ResponsePlot
+            sweep={e.sweep}
+            frequency={e.config.drive.frequency}
+            measured={measured}
+            onSelect={(f) => {
+              setView((v) => ({ ...v, showMode: false }));
+              e.selectFrequency(f);
+            }}
+          />
+          {space === 'records' && (
+            <section className="research-records">
+              <div>
+                <h2>세션 내 실험 기록</h2>
+                <button disabled={!e.modal || !e.sweep} onClick={e.saveRecord}>
+                  실험 복제 · 기록
+                </button>
+                <select
+                  aria-label="조건 비교"
+                  value={comparison}
+                  onChange={(ev) => setComparison(ev.target.value)}
+                >
+                  <option value="">단일 실험</option>
+                  <option value="before" disabled={!e.run}>
+                    초기 / 현재
+                  </option>
+                  {e.records.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      현재 / {r.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {e.records.map((r) => (
+                <div className="record-row" key={r.id}>
+                  <span>{r.name}</span>
+                  <span>
+                    {r.config.drive.frequency.toFixed(1)} Hz ·{' '}
+                    {(r.config.plate.thickness * 1000).toFixed(1)} mm
+                  </span>
+                  <span>FEM / 입자 근사</span>
+                  <button onClick={() => e.loadRecord(r)}>불러오기</button>
+                </div>
+              ))}
+              <div className="media-tools">
+                <button onClick={() => mediaInput.current?.click()}>사진·영상 불러오기</button>
+                <label>
+                  실측 주파수
                   <input
-                    aria-label="구동 주파수 조절"
-                    className="range frequency-range"
-                    type="range"
-                    min="100"
-                    max="1300"
-                    step="1"
-                    value={state.frequency}
-                    onChange={(e) => set({ frequency: +e.target.value })}
+                    aria-label="실측 주파수"
+                    type="number"
+                    value={measuredHz}
+                    onChange={(ev) => setMeasuredHz(ev.target.value)}
                   />
-                  <div className="range-labels">
-                    <span>100</span>
-                    <button onClick={() => set({ frequency: mode.frequency })}>
-                      기준 {mode.frequency} Hz로
-                    </button>
-                    <span>1,300</span>
-                  </div>
-                  <div className="response-meter">
-                    <span>상대 응답</span>
-                    <div>
-                      <i style={{ width: `${response(state.frequency, mode.frequency) * 100}%` }} />
-                    </div>
-                    <span>{Math.round(response(state.frequency, mode.frequency) * 100)}%</span>
-                  </div>
-                </section>
-                <section className="control-section">
-                  <label className="section-title" htmlFor="amplitude">
-                    <span>구동 세기</span>
-                    <span className="mono">
-                      {Math.round(state.amplitude * 100)}
-                      <small> / 100</small>
-                    </span>
-                  </label>
+                </label>
+                <label>
+                  중첩 불투명도
                   <input
-                    id="amplitude"
-                    className="range"
+                    aria-label="중첩 불투명도"
                     type="range"
                     min="0"
                     max="1"
-                    step="0.01"
-                    value={state.amplitude}
-                    onChange={(e) => set({ amplitude: +e.target.value })}
+                    step=".05"
+                    value={opacity}
+                    onChange={(ev) => setOpacity(+ev.target.value)}
                   />
-                  <div className="range-labels">
-                    <span>약하게</span>
-                    <span>강하게</span>
-                  </div>
-                </section>
-                <section className="control-section">
-                  <label className="section-title" htmlFor="particle-material">
-                    입자 재질
-                  </label>
-                  <div className="select-wrap">
-                    <select
-                      id="particle-material"
-                      value={state.particleKind}
-                      onChange={(e) =>
-                        set({ particleKind: e.target.value as SceneState['particleKind'] })
-                      }
-                    >
-                      <option value="sand">규사</option>
-                      <option value="salt">소금</option>
-                      <option value="mixture">규사 + 소금</option>
-                    </select>
-                    <ChevronDown size={13} />
-                  </div>
-                  <div className="material-detail">
-                    <span className="grain-swatch" />
-                    <span>
-                      {state.particleKind === 'mixture'
-                        ? '혼합 입자 · 이동성 비교 모델'
-                        : state.particleKind === 'salt'
-                          ? '백색 입자 · 이동성 예시 0.72'
-                          : '천연 입자 · 이동성 예시 1.00'}
-                    </span>
-                    <span>7,200</span>
-                  </div>
-                </section>
-                {state.view === 'exploded' && (
-                  <section className="control-section">
-                    <label className="section-title" htmlFor="explosion">
-                      부품 간격 <span className="mono">{Math.round(state.explosion * 100)}%</span>
-                    </label>
-                    <input
-                      id="explosion"
-                      className="range"
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      value={state.explosion}
-                      onChange={(e) => set({ explosion: +e.target.value })}
-                    />
-                  </section>
-                )}
-                {isSplit && (
-                  <section className="control-section comparison-controls">
-                    <div className="section-title">비교 조건</div>
-                    {state.view === 'compare' && (
-                      <>
-                        <div className="select-wrap">
-                          <select
-                            aria-label="비교 방식"
-                            value={state.compareKind}
-                            onChange={(e) => set({ compareKind: e.target.value as CompareKind })}
-                          >
-                            <option value="frequency">서로 다른 모드</option>
-                            <option value="experiment">실제 실험 vs 모델</option>
-                            <option value="inverse">직접 vs 역 패턴 · 개념</option>
-                          </select>
-                          <ChevronDown size={13} />
-                        </div>
-                        {state.compareKind === 'frequency' && (
-                          <div className="select-wrap">
-                            <select
-                              aria-label="오른쪽 비교 모드"
-                              value={state.compareModeIndex}
-                              onChange={(e) => set({ compareModeIndex: +e.target.value })}
-                            >
-                              {MODES.map((m, i) => (
-                                <option key={m.id} value={i}>
-                                  모드 0{i + 1} · {m.frequency} Hz
-                                </option>
-                              ))}
-                            </select>
-                            <ChevronDown size={13} />
-                          </div>
-                        )}
-                        {state.compareKind === 'experiment' && (
-                          <>
-                            <button
-                              className="secondary-button"
-                              onClick={() => fileInput.current?.click()}
-                            >
-                              {media ? '실험 기록 바꾸기' : '실험 기록 불러오기'}
-                            </button>
-                            <label className="record-frequency">
-                              실측 주파수 (Hz)
-                              <input
-                                type="number"
-                                min="1"
-                                placeholder="미입력"
-                                value={recordFrequency}
-                                onChange={(e) => setRecordFrequency(e.target.value)}
-                              />
-                            </label>
-                          </>
-                        )}
-                        {state.compareKind === 'inverse' && (
-                          <p className="control-note">
-                            역 패턴은 유체 효과를 대신한 이동 방향 비교입니다. 실제 분리 예측이
-                            아닙니다.
-                          </p>
-                        )}
-                      </>
-                    )}
-                    <label className="section-title split-control" htmlFor="split">
-                      분할 위치<span>{state.split}%</span>
-                    </label>
-                    <input
-                      id="split"
-                      className="range"
-                      type="range"
-                      min="30"
-                      max="70"
-                      value={state.split}
-                      onChange={(e) => set({ split: +e.target.value })}
-                    />
-                  </section>
-                )}
-                <section className="layer-shortcuts">
-                  <div className="section-title">
-                    표시 레이어
-                    <button className="quiet-button" onClick={() => setInspectorTab('parts')}>
-                      전체 <ChevronRight size={11} />
-                    </button>
-                  </div>
-                  {[
-                    { key: 'particles' as const, label: '입자' },
-                    { key: 'nodes' as const, label: '마디선' },
-                    { key: 'annotations' as const, label: '부품 라벨' },
-                  ].map((layer) => (
-                    <label className="toggle-row" key={layer.key}>
-                      <span>{layer.label}</span>
-                      <input
-                        type="checkbox"
-                        checked={state[layer.key]}
-                        onChange={(e) => set({ [layer.key]: e.target.checked })}
-                      />
-                      <span className="switch" />
-                    </label>
-                  ))}
-                </section>
-              </>
-            ) : (
-              <>
-                <div className="parts-intro">부품을 선택하면 장면에서 강조됩니다.</div>
-                <div className="part-list">
-                  {PARTS.map((part) => (
-                    <div
-                      className={`part-row ${state.selectedPart === part.id ? 'selected' : ''}`}
-                      key={part.id}
-                    >
-                      <button
-                        className="part-select"
-                        onClick={() => selectPart(part.id)}
-                        aria-pressed={state.selectedPart === part.id}
-                      >
-                        <span className="mono">{part.index}</span>
-                        <span>
-                          {part.label}
-                          <small>{part.material}</small>
-                        </span>
-                      </button>
-                      <button
-                        className="icon-button part-eye"
-                        onClick={() => togglePart(part.id)}
-                        aria-label={`${part.label} ${isPartHidden(part.id) ? '표시' : '숨기기'}`}
-                      >
-                        {isPartHidden(part.id) ? <Minus size={13} /> : <Eye size={13} />}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                {state.selectedPart && (
-                  <section className="selected-part-detail">
-                    <span className="eyebrow">SELECTED PART</span>
-                    <h3>{PARTS.find((p) => p.id === state.selectedPart)?.label}</h3>
-                    <p>{PARTS.find((p) => p.id === state.selectedPart)?.detail}</p>
-                    <button className="quiet-button" onClick={() => set({ selectedPart: null })}>
-                      선택 해제 <X size={11} />
-                    </button>
-                  </section>
-                )}
-                <label className="toggle-row">
-                  <span>부품 라벨</span>
+                </label>
+                <label>
                   <input
                     type="checkbox"
-                    checked={state.annotations}
-                    onChange={(e) => set({ annotations: e.target.checked })}
+                    checked={sync}
+                    onChange={(ev) => setSync(ev.target.checked)}
                   />
-                  <span className="switch" />
+                  영상 시간 동기화
                 </label>
-                <label className="toggle-row">
-                  <span>마디선</span>
+                <label>
+                  오프셋 s
                   <input
-                    type="checkbox"
-                    checked={state.nodes}
-                    onChange={(e) => set({ nodes: e.target.checked })}
+                    type="number"
+                    value={offset}
+                    step=".1"
+                    onChange={(ev) => setOffset(+ev.target.value)}
                   />
-                  <span className="switch" />
                 </label>
-              </>
-            )}
-          </div>
-          <div className="model-footnote">
-            <span className="model-indicator" />
-            <p>
-              해석 모형 · 계측 전<br />
-              <span>주파수·재질 상수는 보정되지 않았습니다.</span>
-            </p>
-            <button onClick={() => setInfo(true)} aria-label="모델의 가정과 한계 보기">
-              ↗
-            </button>
-          </div>
-        </aside>
-      </div>
-
-      <footer className="bottom-area chrome">
-        <div className="timeline-panel glass">
-          <button
-            className="play-button"
-            aria-label={state.playing ? '일시정지' : '재생'}
-            onClick={togglePlayback}
-          >
-            {state.playing ? (
-              <Pause size={17} fill="currentColor" />
-            ) : (
-              <Play size={17} fill="currentColor" />
-            )}
-          </button>
-          <button
-            className="icon-button reset-button"
-            aria-label="시간 초기화"
-            onClick={() => set({ time: 0, playing: false })}
-          >
-            <RotateCcw size={15} />
-          </button>
-          <div className="time-readout">
-            <span>{state.time.toFixed(1)}</span>
-            <small>/ {DURATION.toFixed(1)} s</small>
-          </div>
-          <div className="timeline-track">
-            <div className="timeline-labels">
-              <span>{state.view === 'assembly' ? '분해' : '입자 분산'}</span>
-              <span>{state.view === 'assembly' ? '조립' : '패턴 형성'}</span>
-            </div>
-            <input
-              aria-label="실험 타임라인"
-              className="range"
-              type="range"
-              min="0"
-              max={DURATION}
-              step="0.01"
-              value={state.time}
-              onChange={(e) => set({ time: +e.target.value, playing: false })}
-            />
-            <div className="timeline-ticks">
-              {[0, 3, 6, 9, 12].map((t) => (
-                <span key={t}>{String(t).padStart(2, '0')}</span>
-              ))}
-            </div>
-          </div>
-          <div className="speed-control">
-            <select
-              aria-label="재생 속도"
-              value={state.speed}
-              onChange={(e) => set({ speed: +e.target.value })}
-            >
-              <option value="0.25">0.25×</option>
-              <option value="0.5">0.5×</option>
-              <option value="1">1×</option>
-              <option value="2">2×</option>
-            </select>
-            <ChevronDown size={10} />
-          </div>
-          <span className="timeline-divider" />
-          <button className="text-button save-settings" onClick={exportSettings}>
-            <SlidersHorizontal size={14} /> 조건 저장
-          </button>
-        </div>
-        <div className="footer-meta">
-          <span>QUADRAJ · CHLADNI STUDIES</span>
-          <span>
-            <VolumeX size={11} /> 오디오 출력 없음 <span className="footer-dot">·</span> 재현 가능한
-            해석 모델
-          </span>
-          <button onClick={() => setInfo(true)}>
-            모델 · 조작 안내 <ArrowRight size={11} />
-          </button>
-        </div>
-      </footer>
-      <div className="mobile-tools chrome">
-        <button onClick={() => setMobilePanel((v) => (v === 'views' ? null : 'views'))}>
-          <Layers3 size={15} />뷰
-        </button>
-        <span>{selectedView.label}</span>
-        <button onClick={() => setMobilePanel((v) => (v === 'settings' ? null : 'settings'))}>
-          <SlidersHorizontal size={15} />
-          설정
-        </button>
-      </div>
-      {presentation && (
-        <div className="presentation-controls glass">
-          <button
-            className="icon-button"
-            onClick={() => {
-              if (demoStep >= 0) endDemo();
-              else setPresentation(false);
-            }}
-            aria-label="발표 종료"
-          >
-            <ArrowLeft size={15} />
-          </button>
-          <span>
-            {demoStep >= 0
-              ? `${String(demoStep + 1).padStart(2, '0')} / ${String(DEMO.length).padStart(2, '0')}  ${DEMO[demoStep].label}`
-              : selectedView.label}
-          </span>
-          {demoStep >= 0 && (
-            <>
-              <button
-                className="icon-button"
-                aria-label={demoPaused ? '데모 계속' : '데모 일시정지'}
-                onClick={() => {
-                  setDemoPaused((v) => !v);
-                  set({ playing: demoPaused });
-                }}
-              >
-                {demoPaused ? <Play size={14} /> : <Pause size={14} />}
-              </button>
-              <button
-                className="icon-button"
-                aria-label="다음 데모 장면"
-                onClick={() => {
-                  if (demoStep < DEMO.length - 1) setDemoStep((v) => v + 1);
-                  else endDemo();
-                }}
-              >
-                <ArrowRight size={15} />
-              </button>
-            </>
+                <button disabled={!media?.type.startsWith('video/')} onClick={extractFrame}>
+                  관찰 프레임 저장
+                </button>
+                <button onClick={() => csvInput.current?.click()}>실측 응답 CSV</button>
+              </div>
+              <p className="help">
+                기록 출처: 사용자 로컬 파일. 영상 동기화는 현재 실험 시간 + 오프셋입니다.
+                원근·모서리 정합과 자동 파라미터 보정은 지원하지 않습니다.{' '}
+                {measuredName &&
+                  `실측 곡선: ${measuredName} · 점 측정과 FEM의 질량 RMS는 서로 다른 관측량일 수 있습니다.`}
+              </p>
+            </section>
           )}
-          <button className="icon-button" onClick={fullscreen} aria-label="전체 화면 전환">
-            <Maximize size={14} />
+        </main>
+        <AnalysisPanel e={e} view={view} setView={setView} />
+      </div>
+      <footer className="app-footer">
+        <span>CHLADNI · QUADRAJ</span>
+        <span>
+          판: FEM 계산 <i />
+          입자: 근사 모델
+          <i />
+          실측 보정 전
+        </span>
+        <span>세션과 실험 기록은 JSON으로 저장하세요.</span>
+      </footer>
+      {space === 'present' && (
+        <div className="presentation-controls glass">
+          <button onClick={() => changeSpace(previousSpace.current)}>
+            <X size={15} />
+            발표 종료
           </button>
-        </div>
-      )}
-      {toast && (
-        <div className="toast glass" role="status">
-          <Check size={14} />
-          {toast}
+          <button
+            onClick={() =>
+              setView({
+                ...view,
+                structure: view.structure === 'exploded' ? 'assembled' : 'exploded',
+              })
+            }
+          >
+            분해 / 조립
+          </button>
+          <button onClick={() => setView({ ...view, structure: 'section' })}>단면</button>
+          <button onClick={() => setView({ ...view, structure: 'ghost' })}>투시</button>
+          <button onClick={() => setAnimate(!animate)}>
+            {animate ? '연출 정지' : '진동 확대'}
+          </button>
+          <button onClick={() => setView({ ...view, layer: 'contour' })}>마디</button>
+          <button onClick={() => setView({ ...view, layer: 'trace' })}>궤적</button>
+          <button onClick={() => setBookmark(api.current?.rig.pose() ?? null)}>시점 저장</button>
+          <button
+            disabled={!bookmark}
+            onClick={() => {
+              if (bookmark) api.current?.rig.restore(bookmark);
+            }}
+          >
+            북마크
+          </button>
+          <button onClick={capture}>PNG</button>
         </div>
       )}
       <input
-        className="sr-only"
-        ref={fileInput}
+        hidden
+        ref={sessionInput}
+        aria-label="세션 파일"
+        type="file"
+        accept=".json"
+        onChange={(ev) => {
+          void loadSession(ev.target.files?.[0]);
+          ev.target.value = '';
+        }}
+      />
+      <input
+        hidden
+        ref={mediaInput}
+        aria-label="실측 미디어 파일"
         type="file"
         accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime"
-        onChange={importRecord}
-        aria-label="실험 기록 파일 선택"
+        onChange={(ev) => loadMedia(ev.target.files?.[0])}
       />
-      <dialog
-        ref={dialog}
-        className="info-dialog"
-        onClose={() => setInfo(false)}
-        onClick={(e) => {
-          if (e.target === e.currentTarget) setInfo(false);
-        }}
-      >
+      <input
+        hidden
+        ref={csvInput}
+        type="file"
+        accept=".csv"
+        onChange={(ev) => void loadMeasured(ev.target.files?.[0])}
+      />
+      {toast && (
+        <div role="status" className="toast">
+          {toast}
+        </div>
+      )}
+      <dialog ref={dialog} onClose={() => setAbout(false)}>
         <button
-          className="dialog-close icon-button"
-          aria-label="안내 닫기"
-          onClick={() => setInfo(false)}
+          className="dialog-close"
+          onClick={() => setAbout(false)}
+          aria-label="모델 안내 닫기"
         >
-          <X size={19} />
+          <X size={18} />
         </button>
-        <span className="eyebrow">ABOUT THE MODEL</span>
-        <h2>모델의 가정과 한계</h2>
+        <h2>계산 모델과 출처</h2>
+        <h3>판 · FEM</h3>
         <p>
-          이 장면은 중앙 구동 진동판의 구조와 클라드니 패턴을 탐색하는 시각화 초안입니다. 실제
-          장비의 유한요소 해석이나 계측 결과를 나타내지 않습니다.
+          Kirchhoff–Love 얇은 판, 16자유도 BFS 직사각형 요소, 일관 질량 행렬과 4×4 Gauss 적분을
+          사용합니다. Kφ = ω²Mφ를 풀고, 질량 정규화된 24모드를 구동점 참여도와 감쇠로 합성합니다.
+          중앙 고정 위치는 메시 절점에 맞춥니다.
         </p>
-        <div className="formula">
-          φ(x, z) = ½ [cos(mα) cos(nβ) − cos(nα) cos(mβ)]
-          <small>α = π(x + 1)/2, β = π(z + 1)/2 · x, z ∈ [−1, 1]</small>
-        </div>
+        <h3>입자 · 근사</h3>
         <p>
-          마디선과 진폭은 위의 근사 장에서 계산합니다. 입자는 φ²의 기울기를 따라 이동하며, 소금과
-          규사의 이동성 차이는 설명을 위한 예시값입니다. 표시된 주파수는 보정되지 않은 기준값이며,
-          자유 가장자리·중앙 체결 조건의 실제 고유진동수와 일치하지 않습니다.
+          판의 가속도/중력 비가 1 이하이면 이동을 유발하지 않습니다. 진폭² 기울기에 대한 경험적
+          이동, 마찰·형태 계수와 Stokes 완화로 시간 적분합니다. 입자 상호충돌·완전한 접촉 역학·공기
+          유동·역 클라드니는 포함하지 않습니다.
+        </p>
+        <h3>해석 범위</h3>
+        <p>
+          기본 300×300×2 mm와 재료 물성은 설계 가정입니다. 구동부 응답·볼트·판의 구멍·가공 공차는 판
+          해석에 포함되지 않습니다. 응력과 급속 스윕 과도응답은 지원하지 않습니다. 큰 변위에서는
+          선형 이론의 적용성을 별도로 확인하세요. 화면 변형은 최대 ±25 mm로 제한하며 확대 배율을
+          표시합니다.
         </p>
         <p>
-          역 패턴 비교는 이동 방향을 뒤집은 개념 모형입니다. 공기 흐름, 유체 내 음향 복사력,
-          충돌·마찰은 풀지 않으며 분리 효율을 예측하지 않습니다. 진동 확대 화면은 정규화 상대변위를
-          과장해 0.65 Hz로 보여줍니다. 중앙 구동점의 절대 운동과 모드 결합은 계산하지 않습니다.
-          타임라인의 초는 시각화 시간입니다.
+          실측 CSV는 사용자 출처로 표시하며 자동 보정하지 않습니다. 교육용 코사인 모델은 별도
+          concept 모듈에 보존하고 본 실험에는 사용하지 않습니다.
         </p>
-        <div className="info-links">
-          <a
-            href="https://sciencedemonstrations.fas.harvard.edu/presentations/chladni-plates"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Harvard · Chladni plates ↗
-          </a>
-          <a href="https://doi.org/10.1103/PhysRevLett.122.184301" target="_blank" rel="noreferrer">
-            Latifi et al. · PRL 122, 184301 ↗
-          </a>
-        </div>
-        <div className="keyboard-help">
-          <span>
-            <kbd>Space</kbd>재생 / 정지
-          </span>
-          <span>
-            <kbd>C</kbd>클린 모드
-          </span>
-          <span>
-            <kbd>R</kbd>전경
-          </span>
-          <span>
-            <kbd>← →</kbd>시간 이동
-          </span>
-        </div>
-        <button className="secondary-button" onClick={() => setInfo(false)}>
-          탐색으로 돌아가기
-        </button>
+        <a
+          href="https://defelement.org/elements/bogner-fox-schmitt.html"
+          target="_blank"
+          rel="noreferrer"
+        >
+          DefElement · BFS 요소 ↗
+        </a>
+        <a
+          href="https://www.vibrationdata.com/tutorials/ss_plate_spatial_pressure.pdf"
+          target="_blank"
+          rel="noreferrer"
+        >
+          T. Irvine · 판 진동 기준식 ↗
+        </a>
       </dialog>
     </div>
   );

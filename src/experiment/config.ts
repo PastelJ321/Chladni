@@ -1,0 +1,125 @@
+import type { Config, ViewSettings } from './types';
+export const MATERIALS = {
+  aluminum: { label: '알루미늄', young: 69e9, density: 2700, poisson: 0.33 },
+  steel: { label: '강철', young: 200e9, density: 7850, poisson: 0.3 },
+  brass: { label: '황동', young: 100e9, density: 8500, poisson: 0.34 },
+};
+export const DEFAULT_CONFIG: Config = {
+  plate: {
+    width: 0.3,
+    height: 0.3,
+    thickness: 0.002,
+    density: 2700,
+    young: 69e9,
+    poisson: 0.33,
+    damping: 0.015,
+    boundary: 'center',
+    supportX: 0.5,
+    supportY: 0.5,
+    mesh: 6,
+    material: 'aluminum',
+  },
+  drive: {
+    kind: 'base',
+    frequency: 300,
+    start: 40,
+    end: 1600,
+    samples: 321,
+    force: 0.1,
+    displacement: 2e-6,
+    x: 0.64,
+    y: 0.51,
+    duration: 8,
+    signal: 'sine',
+  },
+  grains: {
+    kind: 'sand',
+    diameter: 0.00035,
+    spread: 0.25,
+    density: 2650,
+    saltDensity: 2160,
+    shape: 1,
+    friction: 0.35,
+    count: 1800,
+    seed: 240519,
+    ratio: 0.5,
+    distribution: 'uniform',
+    spots: [],
+    transport: 8,
+  },
+};
+export const DEFAULT_VIEW: ViewSettings = {
+  layer: 'material',
+  camera: 'hero',
+  structure: 'assembled',
+  sectionAxis: 'z',
+  sectionPosition: 0,
+  explosion: 1,
+  assembly: 1,
+  gain: 800,
+  mode: 0,
+  showMode: false,
+  particles: true,
+  selected: null,
+  quality: 'standard',
+  phase: 0,
+};
+export const cloneConfig = (c: Config): Config => JSON.parse(JSON.stringify(c));
+export const configKey = (c: Config) => JSON.stringify(c);
+export const plateKey = (p: Config['plate']) => JSON.stringify(p);
+export function validateConfig(c: Config) {
+  const p = c?.plate,
+    d = c?.drive,
+    g = c?.grains;
+  if (!p || !d || !g) throw Error('실험 조건이 누락되었습니다.');
+  const within = (v: number, a: number, b: number) => Number.isFinite(v) && v >= a && v <= b;
+  if (
+    !within(p.width, 0.1, 0.6) ||
+    !within(p.height, 0.1, 0.6) ||
+    !within(p.thickness, 0.0005, 0.006) ||
+    p.thickness / Math.min(p.width, p.height) > 0.04
+  )
+    throw Error('얇은 판 범위를 벗어났습니다. 두께/짧은 변 ≤ 0.04를 사용하세요.');
+  if (
+    !within(p.young, 1e9, 300e9) ||
+    !within(p.density, 500, 20000) ||
+    !within(p.poisson, 0.05, 0.45) ||
+    !within(p.damping, 0.001, 0.2) ||
+    ![4, 6, 8].includes(p.mesh) ||
+    !['center', 'simply-supported', 'clamped', 'cantilever'].includes(p.boundary)
+  )
+    throw Error('판 물성 또는 메시 조건이 올바르지 않습니다.');
+  if (
+    ![p.supportX, p.supportY, d.x, d.y].every((v) => within(v, 0, 1)) ||
+    !within(d.frequency, 1, 5000) ||
+    !within(d.start, 1, 4999) ||
+    !within(d.end, d.start + 1, 5000) ||
+    !within(d.samples, 40, 600) ||
+    !Number.isInteger(d.samples) ||
+    !within(d.force, 0, 2) ||
+    !within(d.displacement, 0, 20e-6) ||
+    !within(d.duration, 0.5, 20) ||
+    !['base', 'force'].includes(d.kind) ||
+    !['sine', 'sweep'].includes(d.signal)
+  )
+    throw Error('구동 조건을 확인하세요.');
+  if (
+    !within(g.count, 20, 5000) ||
+    !Number.isInteger(g.count) ||
+    !within(g.diameter, 0.00005, 0.002) ||
+    !within(g.spread, 0, 0.8) ||
+    !within(g.density, 500, 10000) ||
+    !within(g.saltDensity, 500, 10000) ||
+    !within(g.shape, 0.5, 2) ||
+    !within(g.friction, 0.05, 1) ||
+    !within(g.ratio, 0, 1) ||
+    !within(g.transport, 0, 40) ||
+    !Number.isInteger(g.seed) ||
+    !['sand', 'salt', 'mixture'].includes(g.kind) ||
+    !['uniform', 'spot', 'paint'].includes(g.distribution) ||
+    !Array.isArray(g.spots) ||
+    g.spots.length > 200 ||
+    !g.spots.every((s) => s.length === 2 && s.every((v) => within(v, 0, 1)))
+  )
+    throw Error('입자 조건을 확인하세요.');
+}
