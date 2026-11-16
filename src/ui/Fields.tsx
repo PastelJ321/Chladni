@@ -20,7 +20,7 @@ export function NumberField({
   useEffect(() => setText(String(+value.toPrecision(8))), [value]);
   const commit = () => {
     const n = Number(text);
-    if (text.trim() && Number.isFinite(n)) onChange(n);
+    if (text.trim() && Number.isFinite(n) && n !== +value.toPrecision(8)) onChange(n);
     setText(String(+value.toPrecision(8)));
   };
   return (

@@ -27,7 +27,7 @@ export function createMaterials() {
   roughnessCanvas.height = 512;
   const roughnessContext = roughnessCanvas.getContext('2d')!;
   for (let y = 0; y < 512; y++) {
-    const value = Math.floor(142 + random() * 66);
+    const value = Math.floor(142 + random() * 30);
     roughnessContext.fillStyle = `rgb(${value},${value},${value})`;
     roughnessContext.fillRect(0, y, 512, 1);
   }
@@ -37,9 +37,9 @@ export function createMaterials() {
   const aluminum = new THREE.MeshPhysicalMaterial({
     color: '#929e9f',
     metalness: 0.96,
-    roughness: 0.56,
+    roughness: 0.62,
     roughnessMap: roughness,
-    anisotropy: 0.55,
+    anisotropy: 0.38,
     anisotropyRotation: Math.PI / 2,
     normalMap: brush,
     normalScale: new THREE.Vector2(0.15, 0.15),
@@ -47,7 +47,7 @@ export function createMaterials() {
   const steel = new THREE.MeshStandardMaterial({
     color: '#b2b8b7',
     metalness: 0.96,
-    roughness: 0.24,
+    roughness: 0.3,
   });
   const darkMetal = new THREE.MeshStandardMaterial({
     color: '#272e2c',
@@ -65,7 +65,7 @@ export function createMaterials() {
     roughness: 0.88,
   });
   const cone = new THREE.MeshStandardMaterial({
-    color: '#343936',
+    color: '#36383a',
     metalness: 0.05,
     roughness: 0.83,
     side: THREE.DoubleSide,

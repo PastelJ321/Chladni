@@ -1,5 +1,7 @@
 import * as T from 'three';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { AnimationDirector, explodedParts } from '../animation/director';
+import type { DirectorFrame } from '../animation/director';
+import { fieldAtRun } from '../simulation/particles';
 import { createInstrument, PLATE_Y } from '../scene/instrument';
 import { createMaterials } from '../scene/materials';
 import { CameraRig } from './CameraRig';
@@ -18,6 +20,9 @@ export interface RenderData {
   animate: boolean;
   compare?: Omit<RenderData, 'compare'> | null;
   paint: boolean;
+  mediaPane?: boolean;
+  director?: AnimationDirector;
+  focusRegion?: [number, number, number, number];
 }
 export class LabRenderer {
   renderer: T.WebGLRenderer;
@@ -44,6 +49,10 @@ export class LabRenderer {
   seeds: ReturnType<typeof initialParticles>;
   grainMat: T.MeshStandardMaterial;
   assemblyLevel = 0;
+  film: DirectorFrame | null = null;
+  filmRevision = -1;
+  saltParticles!: T.InstancedMesh;
+  saltMat!: T.MeshStandardMaterial;
   constructor(
     private host: HTMLDivElement,
     data: RenderData,
@@ -58,41 +67,69 @@ export class LabRenderer {
       powerPreference: 'high-performance',
     });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
-    this.renderer.setClearColor('#30343a');
+    this.renderer.setClearColor('#252a30');
     this.renderer.outputColorSpace = T.SRGBColorSpace;
     this.renderer.toneMapping = T.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = T.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = T.VSMShadowMap;
     this.renderer.localClippingEnabled = true;
     host.append(this.renderer.domElement);
     this.renderer.domElement.setAttribute('aria-label', '실험 장비 3D 장면');
     this.renderer.domElement.setAttribute('role', 'img');
     this.rig = new CameraRig(this.renderer.domElement);
-    this.scene.background = new T.Color('#30343a');
-    this.scene.fog = new T.Fog('#30343a', 18, 45);
+    this.rig.onManual = () => {
+      this.data.director?.interrupt();
+      this.dirty = true;
+    };
+    this.scene.background = new T.Color('#252a30');
+    this.scene.fog = new T.Fog('#252a30', 16, 40);
     const pm = new T.PMREMGenerator(this.renderer),
-      room = new RoomEnvironment();
-    this.env = pm.fromScene(room, 0.06);
+      room = new T.Scene();
+    room.background = new T.Color('#2c3034');
+    const cards: T.Mesh[] = [];
+    for (const [w, h, x, y, z, intensity] of [
+      [9, 3, -5, 8, 0, 2.6],
+      [2, 8, 6, 3, -5, 2],
+      [6, 2, 0, 4, 8, 1.2],
+    ]) {
+      const card = new T.Mesh(
+        new T.PlaneGeometry(w, h),
+        new T.MeshBasicMaterial({
+          color: new T.Color(intensity, intensity, intensity),
+          side: T.DoubleSide,
+        }),
+      );
+      card.position.set(x, y, z);
+      card.lookAt(0, 1, 0);
+      room.add(card);
+      cards.push(card);
+    }
+    this.env = pm.fromScene(room, 0.04);
     this.scene.environment = this.env.texture;
-    this.scene.environmentIntensity = 0.55;
-    room.dispose();
+    this.scene.environmentIntensity = 0.7;
+    cards.forEach((c) => {
+      c.geometry.dispose();
+      (c.material as T.Material).dispose();
+    });
     pm.dispose();
-    this.scene.add(new T.HemisphereLight('#e5ebf1', '#34302c', 1.5));
-    const key = new T.DirectionalLight('#fff4e5', 3.1);
+    this.scene.add(new T.HemisphereLight('#e5ebf1', '#34302c', 0.9));
+    const key = new T.DirectionalLight('#fff4e5', 2.8);
     key.position.set(-3, 8, 3);
     key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
     Object.assign(key.shadow.camera, { left: -7, right: 7, top: 7, bottom: -7 });
     key.shadow.normalBias = 0.015;
-    key.shadow.intensity = 0.45;
+    key.shadow.intensity = 0.38;
+    key.shadow.radius = 4;
+    key.shadow.blurSamples = 6;
     this.scene.add(key);
     const fill = new T.DirectionalLight('#d4e1ed', 1.6);
     fill.position.set(5, 4, -4);
     this.scene.add(fill);
     const bench = new T.Mesh(
       new T.BoxGeometry(12, 0.22, 8),
-      new T.MeshStandardMaterial({ color: '#393d42', roughness: 0.8, metalness: 0.12 }),
+      new T.MeshStandardMaterial({ color: '#1c2126', roughness: 0.8, metalness: 0.12 }),
     );
     bench.position.set(0, -0.14, 0);
     bench.receiveShadow = true;
@@ -113,7 +150,24 @@ export class LabRenderer {
     this.scene.add(floor);
     this.scene.add(this.instrument.root, this.overlay);
     this.grainMat = new T.MeshStandardMaterial({ color: '#d6c59f', roughness: 0.92 });
-    this.particles = new T.InstancedMesh(new T.TetrahedronGeometry(1), this.grainMat, 5000);
+    const grain = new T.IcosahedronGeometry(1, 0),
+      position = grain.attributes.position;
+    for (let i = 0; i < position.count; i++) {
+      const factor = 0.84 + 0.13 * Math.sin(i * 12.8);
+      position.setXYZ(
+        i,
+        position.getX(i) * factor,
+        position.getY(i) * (0.82 + 0.13 * Math.cos(i * 8)),
+        position.getZ(i) * (0.9 + 0.08 * Math.sin(i)),
+      );
+    }
+    grain.computeVertexNormals();
+    this.particles = new T.InstancedMesh(grain, this.grainMat, 5000);
+    this.saltMat = new T.MeshStandardMaterial({ color: '#e5e2d8', roughness: 0.72 });
+    this.saltParticles = new T.InstancedMesh(new T.OctahedronGeometry(1, 0), this.saltMat, 5000);
+    this.saltParticles.frustumCulled = false;
+    this.saltParticles.instanceMatrix.setUsage(T.DynamicDrawUsage);
+    this.scene.add(this.saltParticles);
     this.particles.frustumCulled = false;
     this.particles.instanceMatrix.setUsage(T.DynamicDrawUsage);
     this.scene.add(this.particles);
@@ -200,16 +254,9 @@ export class LabRenderer {
       this.seeds = initialParticles(c);
       this.lastConfig = key;
     }
-    const explode =
+    const progress =
       v.structure === 'exploded' ? v.explosion : v.structure === 'assembly' ? 1 - v.assembly : 0;
-    const offsets = {
-      support: 0,
-      speaker: 0.5,
-      coupler: 1.5,
-      plate: 2.6,
-      bolt: 3.2,
-      particles: 3.8,
-    };
+    const poses = this.film?.parts ?? explodedParts(progress);
     const plane = new T.Plane(
       v.sectionAxis === 'x'
         ? new T.Vector3(-1, 0, 0)
@@ -219,32 +266,44 @@ export class LabRenderer {
       v.sectionPosition + (v.sectionAxis === 'y' ? PLATE_Y : 0),
     );
     for (const [id, part] of Object.entries(ins.parts)) {
-      const factor =
-        v.structure === 'assembly'
-          ? Math.max(
-              0,
-              Math.min(1, 1 - v.assembly * 1.8 + (offsets[id as keyof typeof offsets] / 3.8) * 0.8),
-            )
-          : explode;
-      part.position.set(0, offsets[id as keyof typeof offsets] * factor, 0);
+      const pose = poses[id];
+      part.position.fromArray(pose?.offset ?? [0, 0, 0]);
+      part.rotation.fromArray([...(pose?.rotation ?? [0, 0, 0]), 'XYZ']);
       part.visible =
-        id === 'plate' || id === 'support' || id === 'speaker' || p.boundary === 'center';
-      if (id === 'bolt' || id === 'coupler') {
+        [
+          'plate',
+          'support',
+          'speaker',
+          'frame',
+          'magnet',
+          'coil',
+          'cone',
+          'surround',
+          'particles',
+        ].includes(id) || p.boundary === 'center';
+      if (['bolt', 'washerTop', 'washerBottom', 'coupler'].includes(id)) {
         if (c.drive.kind === 'base')
           part.position.y += c.drive.displacement * Math.cos(phase) * v.gain * 12;
-        part.position.x = (Math.round(p.supportX * p.mesh) / p.mesh - 0.5) * p.width * 12;
-        part.position.z = (Math.round(p.supportY * p.mesh) / p.mesh - 0.5) * p.height * 12;
+        part.position.x += (Math.round(p.supportX * p.mesh) / p.mesh - 0.5) * p.width * 12;
+        part.position.z += (Math.round(p.supportY * p.mesh) / p.mesh - 0.5) * p.height * 12;
       }
       part.traverse((o) => {
         if (!(o instanceof T.Mesh)) return;
         const m = o.material as T.MeshStandardMaterial;
         if (!ins.originals.has(m)) return;
-        const clip = v.structure === 'section' || (v.structure === 'cutaway' && id === 'speaker');
+        const clip =
+          v.structure === 'section' ||
+          (v.structure === 'cutaway' &&
+            ['speaker', 'frame', 'magnet', 'coil', 'cone', 'surround'].includes(id));
         const planes = clip ? [plane] : [];
         if (m.clippingPlanes?.length !== planes.length) m.needsUpdate = true;
         m.clippingPlanes = planes;
-        const ghost = v.structure === 'ghost' && (id === 'speaker' || id === 'plate');
-        m.transparent = ghost;
+        const ghost =
+          v.structure === 'ghost' && ['speaker', 'frame', 'cone', 'surround', 'plate'].includes(id);
+        if (m.transparent !== ghost) {
+          m.transparent = ghost;
+          m.needsUpdate = true;
+        }
         m.opacity = ghost ? 0.18 : 1;
         m.depthWrite = !ghost;
         m.emissive.set(v.selected === id ? '#57798b' : '#000000');
@@ -304,41 +363,58 @@ export class LabRenderer {
       plateMat.vertexColors = colored;
       plateMat.needsUpdate = true;
     }
-    plateMat.color.set(colored ? '#ffffff' : '#a4acb1');
+    plateMat.color.set(colored ? '#ffffff' : '#8e989e');
     plateMat.metalness = colored ? 0.15 : 0.9;
     const frame = d.run ? frameAt(d.run, d.time) : null,
       pts = frame?.positions ?? this.seeds.positions,
       diam = d.run?.diameters ?? this.seeds.diameters,
       species = d.run?.species ?? this.seeds.species;
-    this.particles.count = Math.min(5000, pts.length / 2);
+    this.particles.count = 0;
+    this.saltParticles.count = 0;
     this.particles.visible = v.particles;
-    for (let i = 0; i < this.particles.count; i++) {
+    this.saltParticles.visible = v.particles;
+    for (let i = 0; i < Math.min(5000, pts.length / 2); i++) {
       const x = pts[i * 2],
-        y = pts[i * 2 + 1],
-        disp = f ? valueAt(f, x, y, 'displacement', phase) : 0;
+        z = pts[i * 2 + 1],
+        disp = f ? valueAt(f, x, z, 'displacement', phase) : 0,
+        grain = species[i] ? this.saltParticles : this.particles;
+      const radius = diam[i] * 6;
       this.tmp.position.set(
         (x - 0.5) * p.width * 12,
         PLATE_Y +
-          0.016 +
-          offsets.particles * explode +
+          p.thickness * 6 +
+          radius * 0.7 +
+          (poses.particles?.offset[1] ?? 0) +
           Math.max(-0.3, Math.min(0.3, disp * v.gain * 12)),
-        (y - 0.5) * p.height * 12,
+        (z - 0.5) * p.height * 12,
       );
       this.tmp.rotation.set(i * 1.7, i * 0.63, i * 0.41);
-      const s = diam[i] * 12;
-      this.tmp.scale.set(s, s * 0.65, s * 0.85);
+      this.tmp.scale.set(
+        radius * (0.9 + 0.1 * Math.sin(i)),
+        radius * 0.72,
+        radius * (0.9 + 0.13 * Math.cos(i)),
+      );
       this.tmp.updateMatrix();
-      this.particles.setMatrixAt(i, this.tmp.matrix);
-      this.particles.setColorAt(i, color.set(species[i] ? '#f1eee3' : '#ceb88d'));
+      grain.setMatrixAt(grain.count, this.tmp.matrix);
+      grain.setColorAt(
+        grain.count,
+        color.set(species[i] ? '#ece8dd' : '#cdb78c').multiplyScalar(0.88 + (i % 13) / 70),
+      );
+      grain.count++;
     }
-    this.particles.instanceMatrix.needsUpdate = true;
-    if (this.particles.instanceColor) this.particles.instanceColor.needsUpdate = true;
+    for (const grain of [this.particles, this.saltParticles]) {
+      grain.instanceMatrix.needsUpdate = true;
+      if (grain.instanceColor) grain.instanceColor.needsUpdate = true;
+    }
     const particlePlanes = v.structure === 'section' ? [plane] : [];
     if (this.grainMat.clippingPlanes?.length !== particlePlanes.length)
       this.grainMat.needsUpdate = true;
     this.grainMat.clippingPlanes = particlePlanes;
+    if (this.saltMat.clippingPlanes?.length !== particlePlanes.length)
+      this.saltMat.needsUpdate = true;
+    this.saltMat.clippingPlanes = particlePlanes;
     this.clearOverlay();
-    const y = PLATE_Y + 0.028 + offsets.plate * explode;
+    const y = PLATE_Y + 0.028 + (poses.plate?.offset[1] ?? 0);
     if (v.layer === 'mesh') {
       const vertices: number[] = [];
       for (let i = 0; i <= p.mesh; i++) {
@@ -426,11 +502,41 @@ export class LabRenderer {
         }
       this.lines(vertices, '#afc5cd');
     }
+    if (this.film?.region) {
+      const r = d.focusRegion ?? [0.25, 0.25, 0.75, 0.75],
+        vs: number[] = [];
+      for (const [a, b, c1, d1] of [
+        [r[0], r[1], r[2], r[1]],
+        [r[2], r[1], r[2], r[3]],
+        [r[2], r[3], r[0], r[3]],
+        [r[0], r[3], r[0], r[1]],
+      ])
+        vs.push(
+          (a - 0.5) * p.width * 12,
+          y,
+          (b - 0.5) * p.height * 12,
+          (c1 - 0.5) * p.width * 12,
+          y,
+          (d1 - 0.5) * p.height * 12,
+        );
+      this.lines(vs, '#bdcbd3');
+    }
     if (d.run && v.layer === 'trace') {
       const vertices: number[] = [];
       for (let i = 0; i < Math.min(50, d.run.species.length); i++) {
         const id = i * Math.max(1, Math.floor(d.run.species.length / 50));
         for (let j = 1; j < d.run.frames.length && d.run.frames[j].time <= d.time; j++) {
+          const r = d.focusRegion;
+          if (r) {
+            const pos = d.run.frames[0].positions;
+            if (
+              pos[id * 2] < r[0] ||
+              pos[id * 2] > r[2] ||
+              pos[id * 2 + 1] < r[1] ||
+              pos[id * 2 + 1] > r[3]
+            )
+              continue;
+          }
           const a = d.run.frames[j - 1].positions,
             b = d.run.frames[j].positions;
           vertices.push(
@@ -453,28 +559,66 @@ export class LabRenderer {
       dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     if (document.hidden) return;
+    const director = this.data.director;
+    this.film = director?.sample() ?? null;
+    const filmChanged = director && director.revision !== this.filmRevision;
+    if (director) this.filmRevision = director.revision;
     const moved = this.rig.tick(dt);
-    if (!this.dirty && !moved && !this.rig.goal && !this.data.animate) return;
+    if (this.film?.camera) this.rig.applyPose(this.film.camera);
+    if (!this.dirty && !moved && !this.rig.goal && !this.data.animate && !filmChanged) return;
     const ratio = this.data.view.quality === 'low' ? 1 : Math.min(devicePixelRatio, 1.5);
     if (this.renderer.getPixelRatio() !== ratio) this.renderer.setPixelRatio(ratio);
-    const phase = this.data.view.phase + (this.data.animate ? (now / 1000) * Math.PI : 0);
+    const phase =
+      this.film?.phase ?? this.data.view.phase + (this.data.animate ? (now / 1000) * Math.PI : 0);
+    const effective = (d: Omit<RenderData, 'compare'>): Omit<RenderData, 'compare'> => {
+      const time =
+        this.film?.runProgress != null && d.run
+          ? this.film.runProgress * d.run.config.drive.duration
+          : d.time;
+      return {
+        ...d,
+        time,
+        field: d.run && time !== d.time ? fieldAtRun(d.run, time) : d.field,
+        view: {
+          ...d.view,
+          layer: this.film?.layer ?? d.view.layer,
+          gain: this.film?.gain ?? d.view.gain,
+        },
+      };
+    };
     const width = this.host.clientWidth,
       height = this.host.clientHeight;
-    if (this.data.compare) {
+    if (this.data.compare || this.data.mediaPane) {
       const old = this.rig.camera.aspect,
         position = this.rig.camera.position.clone();
+      const aspect = width / 2 / height,
+        distance = position.distanceTo(this.rig.controls.target),
+        halfDiagonal =
+          Math.max(
+            Math.hypot(this.data.config.plate.width, this.data.config.plate.height),
+            this.data.compare
+              ? Math.hypot(
+                  this.data.compare.config.plate.width,
+                  this.data.compare.config.plate.height,
+                )
+              : 0,
+          ) * 6,
+        fit =
+          (halfDiagonal * 1.05) /
+          (Math.tan(T.MathUtils.degToRad(this.rig.camera.fov / 2)) * Math.min(1, aspect));
       this.rig.camera.position
         .sub(this.rig.controls.target)
-        .multiplyScalar(1.5)
+        .normalize()
+        .multiplyScalar(Math.max(distance, fit))
         .add(this.rig.controls.target);
       this.rig.camera.updateMatrixWorld();
       this.renderer.setScissorTest(true);
-      for (let i = 0; i < 2; i++) {
+      for (let i = 0; i < (this.data.mediaPane ? 1 : 2); i++) {
         this.rig.camera.aspect = width / 2 / height;
         this.rig.camera.updateProjectionMatrix();
         this.renderer.setViewport((i * width) / 2, 0, width / 2, height);
         this.renderer.setScissor((i * width) / 2, 0, width / 2, height);
-        this.prepare(i === 0 ? this.data : this.data.compare, phase);
+        this.prepare(effective(i === 0 ? this.data : this.data.compare!), phase);
         this.renderer.render(this.scene, this.rig.camera);
       }
       this.renderer.setScissorTest(false);
@@ -483,7 +627,7 @@ export class LabRenderer {
       this.rig.camera.position.copy(position);
       this.rig.camera.updateProjectionMatrix();
     } else {
-      this.prepare(this.data, phase);
+      this.prepare(effective(this.data), phase);
       this.renderer.render(this.scene, this.rig.camera);
     }
     this.dirty = false;

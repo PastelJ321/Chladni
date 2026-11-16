@@ -1,6 +1,6 @@
 import { seededRandom } from '../concept/physics';
 import type { Config, Field, GrainFrame, ModalResult, Run } from '../experiment/types';
-import { configKey } from '../experiment/config';
+import { configKey, particleGroup } from '../experiment/config';
 import { responseField, sampleGrid } from '../solver/response';
 export function initialParticles(c: Config) {
   const g = c.grains,
@@ -12,9 +12,10 @@ export function initialParticles(c: Config) {
   for (let i = 0; i < g.count; i++) {
     const salt = g.kind === 'salt' || (g.kind === 'mixture' && rand() < g.ratio);
     species.push(salt ? 1 : 0);
-    const diameter = g.diameter * (1 + g.spread * (2 * rand() - 1));
+    const group = particleGroup(g, salt ? 1 : 0);
+    const diameter = group.diameter * (1 + group.spread * (2 * rand() - 1));
     diameters.push(diameter);
-    masses.push(((salt ? g.saltDensity : g.density) * Math.PI * diameter ** 3) / 6);
+    masses.push((group.density * Math.PI * diameter ** 3) / 6);
     let x = rand(),
       y = rand();
     if (g.distribution !== 'uniform') {
@@ -76,8 +77,9 @@ export function simulateParticles(
         gate = Math.max(0, Math.sqrt(energy) - 1) / (1 + Math.sqrt(energy));
       const gradX = (sample(x + h, y) - sample(x - h, y)) / (2 * h * c.plate.width),
         gradY = (sample(x, y + h) - sample(x, y - h)) / (2 * h * c.plate.height);
+      const group = particleGroup(g, initial.species[i] as 0 | 1);
       const mobility =
-        (((g.transport * initial.diameters[i] ** 2) / (g.friction + 0.1)) * gate) / g.shape;
+        (((g.transport * initial.diameters[i] ** 2) / (group.friction + 0.1)) * gate) / group.shape;
       let tx = -mobility * gradX,
         ty = -mobility * gradY;
       const speed = Math.hypot(tx, ty);
@@ -86,8 +88,8 @@ export function simulateParticles(
         ty *= 0.03 / speed;
       }
       // Stokes relaxation only: density enters drag/inertia, not a fictitious dry segregation law.
-      const rho = initial.species[i] ? g.saltDensity : g.density,
-        tau = ((rho * initial.diameters[i] ** 2) / (18 * 1.81e-5)) * g.shape;
+      const rho = group.density,
+        tau = ((rho * initial.diameters[i] ** 2) / (18 * 1.81e-5)) * group.shape;
       const relaxation = 1 - Math.exp(-dt / Math.max(0.005, tau));
       vx[i] += (tx - vx[i]) * relaxation;
       vy[i] += (ty - vy[i]) * relaxation;

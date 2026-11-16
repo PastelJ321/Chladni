@@ -96,7 +96,8 @@ test('dynamic particles are deterministic, finite, conserved, and motion can fai
   const moving = simulateParticles(active, modal);
   assert.ok(moving.frames.at(-1)!.distance.some((v) => v > 0));
   const sized = cloneConfig(active);
-  sized.grains.diameter *= 2;
+  sized.grains.groups!.sand.diameter *= 2;
+  sized.grains.groups!.salt.diameter *= 2;
   assert.notDeepEqual(
     simulateParticles(sized, modal).frames.at(-1)!.positions,
     moving.frames.at(-1)!.positions,

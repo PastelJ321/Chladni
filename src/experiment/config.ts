@@ -1,4 +1,4 @@
-import type { Config, ViewSettings } from './types';
+import type { Config, ViewSettings, Grains, ParticleGroup } from './types';
 export const MATERIALS = {
   aluminum: { label: '알루미늄', young: 69e9, density: 2700, poisson: 0.33 },
   steel: { label: '강철', young: 200e9, density: 7850, poisson: 0.3 },
@@ -33,7 +33,25 @@ export const DEFAULT_CONFIG: Config = {
     signal: 'sine',
   },
   grains: {
-    kind: 'sand',
+    kind: 'mixture',
+    groups: {
+      sand: {
+        diameter: 302.5e-6,
+        spread: 105 / 605,
+        density: 2650,
+        friction: 0.35,
+        shape: 1,
+        sieve: '250–355',
+      },
+      salt: {
+        diameter: 427.5e-6,
+        spread: 145 / 855,
+        density: 2160,
+        friction: 0.3,
+        shape: 1,
+        sieve: '355–500',
+      },
+    },
     diameter: 0.00035,
     spread: 0.25,
     density: 2650,
@@ -103,6 +121,18 @@ export function validateConfig(c: Config) {
     !['sine', 'sweep'].includes(d.signal)
   )
     throw Error('구동 조건을 확인하세요.');
+  if (g.groups)
+    for (const group of [g.groups.sand, g.groups.salt]) {
+      if (
+        !group ||
+        !within(group.diameter, 50e-6, 0.002) ||
+        !within(group.spread, 0, 0.8) ||
+        !within(group.density, 500, 10000) ||
+        !within(group.friction, 0.05, 1) ||
+        !within(group.shape, 0.5, 2)
+      )
+        throw Error('입자군별 조건을 확인하세요.');
+    }
   if (
     !within(g.count, 20, 5000) ||
     !Number.isInteger(g.count) ||
@@ -122,4 +152,35 @@ export function validateConfig(c: Config) {
     !g.spots.every((s) => s.length === 2 && s.every((v) => within(v, 0, 1)))
   )
     throw Error('입자 조건을 확인하세요.');
+}
+
+export const SIEVE_RANGES = [
+  [125, 250],
+  [250, 355],
+  [355, 500],
+  [500, 710],
+  [710, 1000],
+] as const;
+export function particleGroup(g: Grains, species: 0 | 1): ParticleGroup {
+  return (
+    g.groups?.[species ? 'salt' : 'sand'] ?? {
+      diameter: g.diameter,
+      spread: g.spread,
+      density: species ? g.saltDensity : g.density,
+      friction: g.friction,
+      shape: g.shape,
+      sieve: 'legacy',
+    }
+  );
+}
+export function independentGroups(g: Grains) {
+  return { sand: { ...particleGroup(g, 0) }, salt: { ...particleGroup(g, 1) } };
+}
+export function sieveGroup(group: ParticleGroup, lower: number, upper: number): ParticleGroup {
+  return {
+    ...group,
+    diameter: (lower + upper) * 0.5e-6,
+    spread: (upper - lower) / (upper + lower),
+    sieve: `${lower}–${upper}`,
+  };
 }

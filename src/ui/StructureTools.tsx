@@ -55,14 +55,15 @@ export function StructureTools({
           />
           <N
             label="단면 위치"
-            value={view.sectionPosition}
-            step={0.1}
-            onChange={(v) => setView({ ...view, sectionPosition: v })}
+            value={(view.sectionPosition / 12) * 1000}
+            step={5}
+            unit="mm"
+            onChange={(v) => setView({ ...view, sectionPosition: v * 0.012 })}
           />
         </>
       )}
       <p className="help">
-        장비는 개념 기구 모델입니다. 계산에는 판만 포함됩니다. 단면 캡·체결 공차는 지원하지
+        장비는 개념 기구 모델입니다. 계산에는 판만 포함됩니다. 실물 정합·절단면 캡은 지원하지
         않습니다.
       </p>
     </div>

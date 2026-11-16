@@ -1,7 +1,3 @@
 @import './ui/styles/foundation.css';
-@import './ui/styles/configuration.css';
-@import './ui/styles/viewport.css';
 @import './ui/styles/charts.css';
-@import './ui/styles/research.css';
-@import './ui/styles/responsive.css';
-@import './ui/styles/palette.css';
+@import './ui/styles/focused.css';

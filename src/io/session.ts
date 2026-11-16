@@ -11,7 +11,7 @@ export function download(data: Blob | string, name: string, type = 'application/
 export function encodeSession(config: Config, records: RecordEntry[], active?: RecordEntry | null) {
   return JSON.stringify(
     {
-      schema: 'chladni/2',
+      schema: 'chladni/3',
       config,
       records,
       ...(active ? { active } : {}),
@@ -31,7 +31,8 @@ export function decodeSession(raw: string): {
   active?: RecordEntry;
 } {
   const data = JSON.parse(raw);
-  if (data.schema !== 'chladni/2') throw Error('지원하지 않는 세션 형식입니다.');
+  if (!['chladni/2', 'chladni/3'].includes(data.schema))
+    throw Error('지원하지 않는 세션 형식입니다.');
   validateConfig(data.config);
   if (!Array.isArray(data.records) || data.records.length > 20)
     throw Error('기록 목록이 올바르지 않습니다.');

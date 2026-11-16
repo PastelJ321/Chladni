@@ -26,7 +26,17 @@ export interface Drive {
   duration: number;
   signal: 'sine' | 'sweep';
 }
+export interface ParticleGroup {
+  diameter: number;
+  spread: number;
+  density: number;
+  friction: number;
+  shape: number;
+  sieve: string;
+}
 export interface Grains {
+  groups?: { sand: ParticleGroup; salt: ParticleGroup }; // Absent in unchanged v0.2 records.
+
   kind: 'sand' | 'salt' | 'mixture';
   diameter: number;
   spread: number;
@@ -106,7 +116,7 @@ export interface RecordEntry {
   run: Run | null;
   created: string;
 }
-export type Workspace = 'design' | 'simulate' | 'analyze' | 'structure' | 'records' | 'present';
+export type Workspace = 'experiment' | 'analyze' | 'device';
 export type Layer =
   | 'material'
   | 'amplitude'
