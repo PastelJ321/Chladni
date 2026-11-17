@@ -1,5 +1,5 @@
 import type { Config, Field, ModalResult, Sweep } from '../experiment/types';
-import { configKey } from '../experiment/config';
+import { responseKey, sweepKey } from '../experiment/config';
 import { sampleMode } from './modal';
 export function coefficients(modal: ModalResult, c: Config, frequency: number) {
   const w = 2 * Math.PI * frequency;
@@ -40,7 +40,16 @@ export function responseField(
       amplitude.push(amp);
       peak = Math.max(peak, amp);
     }
-  return { source: 'FEM', key: configKey(c), size, real, imag, amplitude, peak, frequency };
+  return {
+    source: 'FEM',
+    key: responseKey(c, frequency),
+    size,
+    real,
+    imag,
+    amplitude,
+    peak,
+    frequency,
+  };
 }
 export function frequencySweep(modal: ModalResult, c: Config): Sweep {
   const points = Array.from({ length: c.drive.samples }, (_, i) => {
@@ -63,9 +72,9 @@ export function frequencySweep(modal: ModalResult, c: Config): Sweep {
     .sort((a, b) => b.rms - a.rms)
     .slice(0, 12)
     .sort((a, b) => a.frequency - b.frequency);
-  return { source: 'FEM', key: configKey(c), points, peaks };
+  return { source: 'FEM', key: sweepKey(c), points, peaks };
 }
-export function sampleGrid(values: number[], size: number, x: number, y: number) {
+export function sampleGrid(values: ArrayLike<number>, size: number, x: number, y: number) {
   const gx = Math.max(0, Math.min(size - 1.000001, x * (size - 1))),
     gy = Math.max(0, Math.min(size - 1.000001, y * (size - 1))),
     ix = Math.floor(gx),

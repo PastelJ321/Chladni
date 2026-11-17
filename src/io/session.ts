@@ -1,5 +1,7 @@
+import { jsonArrays, reviveArrays, packBinary, unpackBinary } from './arrays';
+import { frameAt } from '../simulation/particles';
 import type { Config, RecordEntry, Run, Sweep } from '../experiment/types';
-import { validateConfig, configKey } from '../experiment/config';
+import { validateConfig, configKey, plateKey, legacyPlateKey } from '../experiment/config';
 export function download(data: Blob | string, name: string, type = 'application/json') {
   const url = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type }));
   const a = document.createElement('a');
@@ -8,30 +10,46 @@ export function download(data: Blob | string, name: string, type = 'application/
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-export function encodeSession(config: Config, records: RecordEntry[], active?: RecordEntry | null) {
-  return JSON.stringify(
-    {
-      schema: 'chladni/3',
-      config,
-      records,
-      ...(active ? { active } : {}),
-      provenance: {
-        plate: 'BFS Kirchhoff-Love FEM',
-        particles: 'cycle-averaged approximation',
-        calibrated: false,
-      },
+export function sessionData(config: Config, records: RecordEntry[], active?: RecordEntry | null) {
+  return {
+    schema: 'chladni/4',
+    config,
+    records,
+    ...(active ? { active } : {}),
+    provenance: {
+      plate: 'BFS Kirchhoff-Love FEM',
+      particles: 'cycle-averaged approximation',
+      calibrated: false,
     },
-    null,
-    2,
-  );
+  };
+}
+export function encodeSession(config: Config, records: RecordEntry[], active?: RecordEntry | null) {
+  return JSON.stringify(sessionData(config, records, active), jsonArrays);
+}
+export function encodeBinarySession(
+  config: Config,
+  records: RecordEntry[],
+  active?: RecordEntry | null,
+) {
+  return packBinary(sessionData(config, records, active));
+}
+export function decodeBinarySession(buffer: ArrayBuffer) {
+  return validateSession(unpackBinary(buffer));
 }
 export function decodeSession(raw: string): {
   config: Config;
   records: RecordEntry[];
   active?: RecordEntry;
 } {
-  const data = JSON.parse(raw);
-  if (!['chladni/2', 'chladni/3'].includes(data.schema))
+  return validateSession(JSON.parse(raw, reviveArrays));
+}
+function validateSession(value: unknown): {
+  config: Config;
+  records: RecordEntry[];
+  active?: RecordEntry;
+} {
+  const data = value as ReturnType<typeof sessionData>;
+  if (!['chladni/2', 'chladni/3', 'chladni/4'].includes(data.schema))
     throw Error('지원하지 않는 세션 형식입니다.');
   validateConfig(data.config);
   if (!Array.isArray(data.records) || data.records.length > 20)
@@ -43,11 +61,11 @@ export function decodeSession(raw: string): {
       r.sweep?.source !== 'FEM' ||
       !Array.isArray(r.modal.frequencies) ||
       !r.modal.frequencies.every((v: number) => Number.isFinite(v) && v > 0) ||
-      r.modal.key !== JSON.stringify(r.config.plate)
+      ![plateKey(r.config.plate), legacyPlateKey(r.config.plate)].includes(r.modal.key)
     )
       throw Error('해석 기록이 손상되었습니다.');
     const finite = (a: unknown, len?: number): a is number[] =>
-      Array.isArray(a) &&
+      (Array.isArray(a) || a instanceof Float32Array) &&
       (len === undefined || a.length === len) &&
       a.every((v) => Number.isFinite(v));
     if (
@@ -67,8 +85,8 @@ export function decodeSession(raw: string): {
       (r.run.key !== configKey(r.config) ||
         !Array.isArray(r.run.frames) ||
         r.run.frames.some(
-          (f: { positions: number[] }) =>
-            !Array.isArray(f.positions) ||
+          (f: { positions: number[] | Float32Array }) =>
+            !(Array.isArray(f.positions) || f.positions instanceof Float32Array) ||
             f.positions.length !== r.config.grains.count * 2 ||
             f.positions.some((v) => !Number.isFinite(v) || v < 0 || v > 1),
         ))
@@ -120,7 +138,7 @@ export function sweepCSV(s: Sweep) {
   );
 }
 export function particlesCSV(r: Run, time: number) {
-  const f = r.frames.reduce((a, b) => (Math.abs(b.time - time) < Math.abs(a.time - time) ? b : a));
+  const f = frameAt(r, time);
   return (
     'source,time_s,id,species,diameter_m,mass_kg,x_m,y_m,distance_m\n' +
     r.species

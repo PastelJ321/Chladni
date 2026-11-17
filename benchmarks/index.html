@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Chladni rendering benchmark</title>
+    <style>
+      body {
+        margin: 0;
+        background: #dce0df;
+      }
+      #viewport {
+        width: 1200px;
+        height: 700px;
+        position: relative;
+      }
+      canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      pre {
+        font: 13px monospace;
+        color: #243e51;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="viewport"></div>
+    <pre id="output">Benchmark harness. See scripts/benchmark.mjs.</pre>
+    <script type="module" src="./renderer.ts"></script>
+  </body>
+</html>

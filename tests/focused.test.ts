@@ -69,23 +69,33 @@ test('legacy v0.2 records preserve original keys and calculation arrays through 
   const old = cloneConfig(c);
   delete old.grains.groups;
   const run = simulateParticles(old, modal);
+  // v0.2 used full-config field keys and a full-plate modal key, without recording metadata.
+  run.fields = run.fields.map((f) => ({ ...f, key: configKey(old) }));
+  delete run.motion;
+  delete run.precision;
+  delete run.recordHz;
   const record = {
     id: 'legacy',
     name: 'v02',
     config: old,
-    modal,
+    modal: { ...modal, key: JSON.stringify(old.plate) },
     sweep: { key: configKey(old), source: 'FEM' as const, points: [], peaks: [] },
     run,
     created: '2026-11-12',
   };
-  const raw = JSON.stringify({
-    schema: 'chladni/2',
-    config: old,
-    records: [record],
-    active: record,
-  });
+  const raw = JSON.stringify(
+    {
+      schema: 'chladni/2',
+      config: old,
+      records: [record],
+      active: record,
+    },
+    (_key, v) => (v instanceof Float32Array ? Array.from(v) : v),
+  );
+  // Historical files used ordinary numeric arrays.
+  const legacyRecord = JSON.parse(raw).records[0];
   const loaded = decodeSession(raw);
-  assert.deepEqual(loaded.records[0], record);
+  assert.deepEqual(loaded.records[0], legacyRecord);
   assert.equal(loaded.records[0].run!.key, configKey(old));
   assert.deepEqual(
     decodeSession(encodeSession(loaded.config, loaded.records, loaded.active)),

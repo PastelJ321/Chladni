@@ -1,4 +1,4 @@
-export type SequenceId = 'reveal' | 'exploded' | 'resonance' | 'formation' | 'comparison';
+export type SequenceId = 'reveal' | 'exploded' | 'resonance' | 'formation' | 'comparison' | 'macro';
 export type Vec3 = [number, number, number];
 export interface CameraPose {
   position: number[];
@@ -30,6 +30,7 @@ export const SEQUENCES: {
   { id: 'exploded', label: '정밀 분해 · 조립', duration: 18, requires: 'none' },
   { id: 'resonance', label: '공진과 모드', duration: 12, requires: 'field' },
   { id: 'formation', label: '입자 이동 관찰', duration: 14, requires: 'run' },
+  { id: 'macro', label: '입자 매크로', duration: 10, requires: 'none' },
   { id: 'comparison', label: '실측과 비교', duration: 10, requires: 'media' },
 ];
 export const smooth = (x: number) => {
@@ -51,9 +52,9 @@ export function explodedParts(progress: number): Record<string, PartPose> {
   return {
     bolt: pose(
       0.34 * step(0.18, 0.38),
-      0.052 * release + 2.648 * step(0.12, 0.3),
+      0.104 * release + 2.596 * step(0.12, 0.3),
       0,
-      -Math.PI * 8 * release,
+      -Math.PI * 16 * release,
     ),
     washerTop: pose(0, 2.32 * step(0.08, 0.36)),
     plate: pose(0, 1.78 * plate),
@@ -65,7 +66,7 @@ export function explodedParts(progress: number): Record<string, PartPose> {
     coil: pose(0, 0.26 * driver),
     cone: pose(0, 0.48 * driver),
     surround: pose(0, 0.53 * driver),
-    particles: pose(0, 2.02 * plate),
+    particles: pose(0, 1.78 * plate),
     support: pose(),
   };
 }
@@ -124,9 +125,10 @@ export class AnimationDirector {
     this.playing = false;
     this.revision++;
   }
-  resume() {
+  resume(direction = 1) {
     if (this.id) {
-      if (this.time >= this.duration) this.time = 0;
+      if (direction > 0 && this.time >= this.duration) this.time = 0;
+      if (direction < 0 && this.time <= 0) this.time = this.duration;
       this.playing = true;
       this.reason = '';
       this.revision++;
@@ -156,8 +158,9 @@ export class AnimationDirector {
   }
   tick(dt: number, speed = 1) {
     if (this.playing) {
-      this.time = Math.min(this.duration, this.time + Math.max(0, Math.min(0.1, dt)) * speed);
-      if (this.time === this.duration) this.playing = false;
+      this.time = Math.max(0, Math.min(this.duration, this.time + Math.max(0, dt) * speed));
+      if ((speed > 0 && this.time === this.duration) || (speed < 0 && this.time === 0))
+        this.playing = false;
       this.revision++;
     }
   }
@@ -208,17 +211,29 @@ export class AnimationDirector {
         layer = p < 0.28 ? 'material' : p < 0.7 ? 'amplitude' : 'contour';
         gain = 1200 * smooth(p / 0.35);
         break;
+      case 'macro':
+        camera = track(
+          t,
+          [
+            { t: 6, position: [0.68, 2.48, 0.92], target: [0.55, 2.252, 0.55], fov: 32 },
+            { t: 9, position: [0.65, 2.46, 0.89], target: [0.55, 2.252, 0.55], fov: 32 },
+          ],
+          this.origin,
+        );
+        gain = 1;
+        break;
       case 'formation':
         camera = track(
           t,
           [
             { t: 3, position: [0.05, 9.4, 0.09], target: [0, 2.24, 0], fov: 31 },
-            { t: 11, position: [1.5, 3.9, 2.25], target: [0.35, 2.24, 0.25], fov: 32 },
+            { t: 11, position: [0.68, 2.48, 0.92], target: [0.55, 2.252, 0.55], fov: 32 },
           ],
           this.origin,
         );
         runProgress = smooth(Math.min(1, p / 0.82));
-        layer = p > 0.5 ? 'trace' : 'material';
+        layer = p > 0.5 && p < 0.72 ? 'trace' : 'material';
+        gain = 1 + 199 * (1 - smooth((p - 0.35) / 0.35));
         region = p > 0.64;
         break;
       case 'comparison':

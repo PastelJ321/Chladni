@@ -26,7 +26,27 @@ export interface Drive {
   duration: number;
   signal: 'sine' | 'sweep';
 }
+export type ParticleMaterialId = 'sand' | 'salt' | 'sugar' | 'glass' | 'custom';
+export type NumericArray = number[] | Float32Array;
+export interface ParticlePhysicalProperties {
+  diameterMeters: number;
+  density: number;
+  shape: number;
+  friction: number;
+  species: ParticleMaterialId;
+}
+export interface ParticleVisualProperties {
+  mode: 'actual' | 'observe';
+  apparentSize: number;
+  minimumPixelDiameter: number;
+  displayMagnification: number;
+  count: number;
+  LOD: 'auto' | 'sprites';
+  shadingMode: 'material' | 'species';
+  overrides?: Partial<Record<'sand' | 'salt', { color: string; roughness: number }>>;
+}
 export interface ParticleGroup {
+  material?: ParticleMaterialId;
   diameter: number;
   spread: number;
   density: number;
@@ -91,8 +111,8 @@ export interface Sweep {
 }
 export interface GrainFrame {
   time: number;
-  positions: number[];
-  distance: number[];
+  positions: NumericArray;
+  distance: NumericArray;
 }
 export interface Run {
   key: string;
@@ -104,6 +124,15 @@ export interface Run {
   species: number[];
   masses: number[];
   lost: number;
+  recordHz?: number;
+  precision?: 'float32';
+  motion?: {
+    state: 'undriven' | 'below-threshold' | 'stationary' | 'moving';
+    maxGamma: number;
+    movingCount: number;
+    maxDistance: number;
+    totalMass: number;
+  };
   dt: number;
   elapsedMs: number;
 }
@@ -143,4 +172,5 @@ export interface ViewSettings {
   selected: string | null;
   quality: 'standard' | 'low';
   phase: number;
+  particleVisual?: ParticleVisualProperties;
 }

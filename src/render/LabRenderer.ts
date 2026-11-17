@@ -1,3 +1,7 @@
+import { QualityGovernor } from './quality';
+import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
+import { PlateField } from './PlateField';
+import { ParticleRenderer } from './ParticleRenderer';
 import * as T from 'three';
 import { AnimationDirector, explodedParts } from '../animation/director';
 import type { DirectorFrame } from '../animation/director';
@@ -6,9 +10,8 @@ import { createInstrument, PLATE_Y } from '../scene/instrument';
 import { createMaterials } from '../scene/materials';
 import { CameraRig } from './CameraRig';
 import type { Config, Field, ModalResult, Run, ViewSettings } from '../experiment/types';
-import { initialParticles, frameAt } from '../simulation/particles';
-import { densityGrid } from '../analysis/metrics';
-import { valueAt, isolines } from './layers';
+import { initialParticles, framePair } from '../simulation/particles';
+import { isolines } from './layers';
 import { sampleGrid } from '../solver/response';
 export interface RenderData {
   config: Config;
@@ -22,6 +25,7 @@ export interface RenderData {
   paint: boolean;
   mediaPane?: boolean;
   director?: AnimationDirector;
+  currentTime?: () => number;
   focusRegion?: [number, number, number, number];
 }
 export class LabRenderer {
@@ -31,7 +35,14 @@ export class LabRenderer {
   materials = createMaterials();
   instrument = createInstrument(this.materials);
   overlay = new T.Group();
-  particles: T.InstancedMesh;
+  fieldGPU = new PlateField();
+  cloud = new ParticleRenderer(this.fieldGPU);
+  overlayKey = '';
+  overlayField: Field | null = null;
+  compareCloud = new ParticleRenderer(this.fieldGPU);
+  activeQuality = 'standard';
+  quality = new QualityGovernor();
+  adaptiveQuality = true;
   env: T.WebGLRenderTarget;
   observer: ResizeObserver;
   data: RenderData;
@@ -39,20 +50,17 @@ export class LabRenderer {
   raf = 0;
   last = performance.now();
   disposed = false;
-  initial = initialParticles;
-  tmp = new T.Object3D();
+  environmentReady = false;
   ray = new T.Raycaster();
   down = [0, 0];
   lastCamera = 'hero';
   lastStructure = 'assembled';
   lastConfig = '';
   seeds: ReturnType<typeof initialParticles>;
-  grainMat: T.MeshStandardMaterial;
-  assemblyLevel = 0;
+
   film: DirectorFrame | null = null;
   filmRevision = -1;
-  saltParticles!: T.InstancedMesh;
-  saltMat!: T.MeshStandardMaterial;
+
   constructor(
     private host: HTMLDivElement,
     data: RenderData,
@@ -63,14 +71,14 @@ export class LabRenderer {
     this.seeds = initialParticles(data.config);
     this.renderer = new T.WebGLRenderer({
       antialias: true,
-      preserveDrawingBuffer: true,
+      preserveDrawingBuffer: false,
       powerPreference: 'high-performance',
     });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     this.renderer.setClearColor('#252a30');
     this.renderer.outputColorSpace = T.SRGBColorSpace;
     this.renderer.toneMapping = T.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.0;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = T.VSMShadowMap;
     this.renderer.localClippingEnabled = true;
@@ -113,8 +121,44 @@ export class LabRenderer {
       (c.material as T.Material).dispose();
     });
     pm.dispose();
-    this.scene.add(new T.HemisphereLight('#e5ebf1', '#34302c', 0.9));
-    const key = new T.DirectionalLight('#fff4e5', 2.8);
+    new HDRLoader().load(
+      `${import.meta.env.BASE_URL}environment/studio_small_08_1k.hdr`,
+      (hdr) => {
+        if (this.disposed) {
+          hdr.dispose();
+          return;
+        }
+        const generator = new T.PMREMGenerator(this.renderer),
+          next = generator.fromEquirectangular(hdr);
+        hdr.dispose();
+        generator.dispose();
+        this.env.dispose();
+        this.env = next;
+        this.scene.environment = next.texture;
+        this.scene.environmentIntensity = 0.72;
+        this.scene.environmentRotation.y = 0.65;
+        this.environmentReady = true;
+        this.dirty = true;
+      },
+      undefined,
+      () => {
+        this.environmentReady = false;
+      },
+    );
+    void import('three/addons/lights/RectAreaLightUniformsLib.js').then(
+      ({ RectAreaLightUniformsLib }) => {
+        if (this.disposed) return;
+        RectAreaLightUniformsLib.init();
+        const softbox = new T.RectAreaLight('#e5edf2', 5.5, 4, 6);
+        softbox.position.set(-3, 5, 3);
+        softbox.lookAt(0, 1.5, 0);
+        this.scene.add(softbox);
+        this.dirty = true;
+      },
+    );
+
+    this.scene.add(new T.HemisphereLight('#e5ebf1', '#34302c', 0.55));
+    const key = new T.DirectionalLight('#fff4e5', 2.1);
     key.position.set(-3, 8, 3);
     key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
@@ -124,7 +168,7 @@ export class LabRenderer {
     key.shadow.radius = 4;
     key.shadow.blurSamples = 6;
     this.scene.add(key);
-    const fill = new T.DirectionalLight('#d4e1ed', 1.6);
+    const fill = new T.DirectionalLight('#d4e1ed', 1.8);
     fill.position.set(5, 4, -4);
     this.scene.add(fill);
     const bench = new T.Mesh(
@@ -149,28 +193,11 @@ export class LabRenderer {
     floor.receiveShadow = true;
     this.scene.add(floor);
     this.scene.add(this.instrument.root, this.overlay);
-    this.grainMat = new T.MeshStandardMaterial({ color: '#d6c59f', roughness: 0.92 });
-    const grain = new T.IcosahedronGeometry(1, 0),
-      position = grain.attributes.position;
-    for (let i = 0; i < position.count; i++) {
-      const factor = 0.84 + 0.13 * Math.sin(i * 12.8);
-      position.setXYZ(
-        i,
-        position.getX(i) * factor,
-        position.getY(i) * (0.82 + 0.13 * Math.cos(i * 8)),
-        position.getZ(i) * (0.9 + 0.08 * Math.sin(i)),
-      );
-    }
-    grain.computeVertexNormals();
-    this.particles = new T.InstancedMesh(grain, this.grainMat, 5000);
-    this.saltMat = new T.MeshStandardMaterial({ color: '#e5e2d8', roughness: 0.72 });
-    this.saltParticles = new T.InstancedMesh(new T.OctahedronGeometry(1, 0), this.saltMat, 5000);
-    this.saltParticles.frustumCulled = false;
-    this.saltParticles.instanceMatrix.setUsage(T.DynamicDrawUsage);
-    this.scene.add(this.saltParticles);
-    this.particles.frustumCulled = false;
-    this.particles.instanceMatrix.setUsage(T.DynamicDrawUsage);
-    this.scene.add(this.particles);
+    this.scene.add(this.cloud.root, this.compareCloud.root);
+    this.fieldGPU.attach(this.instrument.plate.material as T.Material);
+    const depth = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking });
+    this.fieldGPU.attach(depth, true);
+    this.instrument.plate.customDepthMaterial = depth;
     this.observer = new ResizeObserver(() => this.resize());
     this.observer.observe(host);
     this.resize();
@@ -240,10 +267,19 @@ export class LabRenderer {
       ),
       m = new T.LineBasicMaterial({ color, transparent: true, opacity, depthTest: false });
     const line = new T.LineSegments(g, m);
+    this.fieldGPU.attachOverlay(m);
     line.renderOrder = 4;
     this.overlay.add(line);
   }
-  prepare(d: Omit<RenderData, 'compare'>, phase: number) {
+  prepare(
+    d: Omit<RenderData, 'compare'>,
+    phase: number,
+    slot = 0,
+    particleRatio = this.renderer.getPixelRatio(),
+  ) {
+    const cloud = slot === 0 ? this.cloud : this.compareCloud;
+    this.cloud.root.visible = slot === 0 && d.view.particles;
+    this.compareCloud.root.visible = slot === 1 && d.view.particles;
     const { config: c, view: v, field: f } = d,
       p = c.plate,
       ins = this.instrument,
@@ -310,111 +346,52 @@ export class LabRenderer {
         m.emissiveIntensity = 0.2;
       });
     }
-    const positions = ins.plate.geometry.attributes.position as T.BufferAttribute,
-      colors: number[] = [],
-      density = densityGrid(d.run ? frameAt(d.run, d.time).positions : this.seeds.positions);
-    const maxD = Math.max(1, ...density),
-      color = new T.Color(),
-      lo = new T.Color('#31566a'),
-      hi = new T.Color('#d7b170');
-    const colored =
-      v.layer !== 'material' &&
-      v.layer !== 'mesh' &&
-      v.layer !== 'trace' &&
-      v.layer !== 'vector' &&
-      v.layer !== 'contour';
-    let max = 0;
-    if (f) {
-      const factor =
-        v.layer === 'velocity'
-          ? 2 * Math.PI * f.frequency
-          : v.layer === 'acceleration'
-            ? (2 * Math.PI * f.frequency) ** 2
-            : 1;
-      max = f.peak * factor;
+    // Plate topology/normals stay immutable during playback; deformation and data colors are GPU sampled.
+    ins.plate.scale.set(scaleX, 1, scaleZ);
+    this.fieldGPU.uniforms.uThickness.value = p.thickness / 0.002;
+    this.fieldGPU.uniforms.uPlateSize.value.set(p.width * 12, p.height * 12);
+    this.fieldGPU.update(f, phase, v.gain, v.layer);
+    const mat = ins.plate.material as T.MeshPhysicalMaterial;
+    const colored = ['amplitude', 'displacement', 'velocity', 'acceleration', 'density'].includes(
+      v.layer,
+    );
+    mat.metalness = colored ? 0.08 : 0.96;
+    mat.roughness = colored ? 0.65 : 0.42;
+    mat.color.set(colored ? '#ffffff' : '#a6aeb2');
+    if (v.layer === 'density') {
+      const frame = d.run ? framePair(d.run, d.time).a : null;
+      this.fieldGPU.updateDensity(frame?.positions ?? this.seeds.positions, frame ?? this.seeds);
     }
-    for (let i = 0; i < positions.count; i++) {
-      const x = ins.restPositions[i * 3] / 3.6 + 0.5,
-        y = ins.restPositions[i * 3 + 2] / 3.6 + 0.5;
-      const displacement = f ? valueAt(f, x, y, 'displacement', phase) : 0;
-      positions.setXYZ(
-        i,
-        ins.restPositions[i * 3] * scaleX,
-        (ins.restPositions[i * 3 + 1] * p.thickness) / 0.002 +
-          Math.max(-0.3, Math.min(0.3, displacement * v.gain * 12)),
-        ins.restPositions[i * 3 + 2] * scaleZ,
-      );
-      const value =
-        v.layer === 'density'
-          ? density[Math.min(15, Math.floor(y * 16)) * 16 + Math.min(15, Math.floor(x * 16))] / maxD
-          : f
-            ? valueAt(f, x, y, v.layer, phase) / Math.max(1e-20, max)
-            : 0;
-      color
-        .copy(lo)
-        .lerp(hi, v.layer === 'displacement' ? (value + 1) / 2 : Math.max(0, Math.min(1, value)));
-      colors.push(color.r, color.g, color.b);
-    }
-    positions.needsUpdate = true;
-    ins.plate.geometry.computeVertexNormals();
-    ins.plate.geometry.setAttribute('color', new T.Float32BufferAttribute(colors, 3));
-    const plateMat = ins.plate.material as T.MeshStandardMaterial;
-    if (plateMat.vertexColors !== colored) {
-      plateMat.vertexColors = colored;
-      plateMat.needsUpdate = true;
-    }
-    plateMat.color.set(colored ? '#ffffff' : '#8e989e');
-    plateMat.metalness = colored ? 0.15 : 0.9;
-    const frame = d.run ? frameAt(d.run, d.time) : null,
-      pts = frame?.positions ?? this.seeds.positions,
-      diam = d.run?.diameters ?? this.seeds.diameters,
-      species = d.run?.species ?? this.seeds.species;
-    this.particles.count = 0;
-    this.saltParticles.count = 0;
-    this.particles.visible = v.particles;
-    this.saltParticles.visible = v.particles;
-    for (let i = 0; i < Math.min(5000, pts.length / 2); i++) {
-      const x = pts[i * 2],
-        z = pts[i * 2 + 1],
-        disp = f ? valueAt(f, x, z, 'displacement', phase) : 0,
-        grain = species[i] ? this.saltParticles : this.particles;
-      const radius = diam[i] * 6;
-      this.tmp.position.set(
-        (x - 0.5) * p.width * 12,
-        PLATE_Y +
-          p.thickness * 6 +
-          radius * 0.7 +
-          (poses.particles?.offset[1] ?? 0) +
-          Math.max(-0.3, Math.min(0.3, disp * v.gain * 12)),
-        (z - 0.5) * p.height * 12,
-      );
-      this.tmp.rotation.set(i * 1.7, i * 0.63, i * 0.41);
-      this.tmp.scale.set(
-        radius * (0.9 + 0.1 * Math.sin(i)),
-        radius * 0.72,
-        radius * (0.9 + 0.13 * Math.cos(i)),
-      );
-      this.tmp.updateMatrix();
-      grain.setMatrixAt(grain.count, this.tmp.matrix);
-      grain.setColorAt(
-        grain.count,
-        color.set(species[i] ? '#ece8dd' : '#cdb78c').multiplyScalar(0.88 + (i % 13) / 70),
-      );
-      grain.count++;
-    }
-    for (const grain of [this.particles, this.saltParticles]) {
-      grain.instanceMatrix.needsUpdate = true;
-      if (grain.instanceColor) grain.instanceColor.needsUpdate = true;
-    }
-    const particlePlanes = v.structure === 'section' ? [plane] : [];
-    if (this.grainMat.clippingPlanes?.length !== particlePlanes.length)
-      this.grainMat.needsUpdate = true;
-    this.grainMat.clippingPlanes = particlePlanes;
-    if (this.saltMat.clippingPlanes?.length !== particlePlanes.length)
-      this.saltMat.needsUpdate = true;
-    this.saltMat.clippingPlanes = particlePlanes;
+    cloud.root.visible = v.particles && !v.showMode;
+    cloud.setClipping(v.structure === 'section' ? plane : null);
+    cloud.root.position.set(0, PLATE_Y + p.thickness * 6 + (poses.particles?.offset[1] ?? 0), 0);
+    cloud.update(
+      c,
+      d.run,
+      d.time,
+      v.particleVisual,
+      this.rig.camera,
+      this.host.clientHeight,
+      particleRatio,
+      this.activeQuality === 'low',
+    );
+    const overlayKey = JSON.stringify([
+      v.layer,
+      p.width,
+      p.height,
+      p.mesh,
+      v.gain,
+      d.run?.key,
+      Math.floor(d.time * (d.run?.recordHz ?? 20)),
+      d.focusRegion,
+      this.film?.region,
+      poses.plate?.offset[1],
+    ]);
+    if (overlayKey === this.overlayKey && f === this.overlayField) return;
+    this.overlayKey = overlayKey;
+    this.overlayField = f;
     this.clearOverlay();
-    const y = PLATE_Y + 0.028 + (poses.plate?.offset[1] ?? 0);
+    const y = PLATE_Y + p.thickness * 6 + 0.005 + (poses.plate?.offset[1] ?? 0);
     if (v.layer === 'mesh') {
       const vertices: number[] = [];
       for (let i = 0; i <= p.mesh; i++) {
@@ -426,19 +403,12 @@ export class LabRenderer {
             [a, b, a, k],
             [b, a, k, a],
           ]) {
-            const lift = (x: number, z: number) =>
-              f
-                ? Math.max(
-                    -0.3,
-                    Math.min(0.3, valueAt(f, x, z, 'displacement', phase) * v.gain * 12),
-                  )
-                : 0;
             vertices.push(
               (x1 - 0.5) * p.width * 12,
-              y + lift(x1, z1),
+              y,
               (z1 - 0.5) * p.height * 12,
               (x2 - 0.5) * p.width * 12,
-              y + lift(x2, z2),
+              y,
               (z2 - 0.5) * p.height * 12,
             );
           }
@@ -563,22 +533,30 @@ export class LabRenderer {
     this.film = director?.sample() ?? null;
     const filmChanged = director && director.revision !== this.filmRevision;
     if (director) this.filmRevision = director.revision;
+    this.quality.sample(dt, !!this.data.animate || !!this.rig.goal || !!this.film?.camera);
     const moved = this.rig.tick(dt);
     if (this.film?.camera) this.rig.applyPose(this.film.camera);
     if (!this.dirty && !moved && !this.rig.goal && !this.data.animate && !filmChanged) return;
-    const ratio = this.data.view.quality === 'low' ? 1 : Math.min(devicePixelRatio, 1.5);
+    this.draw();
+  };
+  draw(width = this.host.clientWidth, height = this.host.clientHeight, captureMode = false) {
+    const low = this.data.view.quality === 'low' || (this.adaptiveQuality && this.quality.degraded);
+    this.activeQuality = low ? 'low' : 'standard';
+    const ratio = captureMode ? 1 : low ? 1 : Math.min(devicePixelRatio, 1.5);
     if (this.renderer.getPixelRatio() !== ratio) this.renderer.setPixelRatio(ratio);
-    const phase =
-      this.film?.phase ?? this.data.view.phase + (this.data.animate ? (now / 1000) * Math.PI : 0);
+    const phase = this.film?.phase ?? this.data.view.phase;
     const effective = (d: Omit<RenderData, 'compare'>): Omit<RenderData, 'compare'> => {
       const time =
         this.film?.runProgress != null && d.run
           ? this.film.runProgress * d.run.config.drive.duration
-          : d.time;
+          : (d.currentTime?.() ?? d.time);
       return {
         ...d,
         time,
-        field: d.run && time !== d.time ? fieldAtRun(d.run, time) : d.field,
+        field:
+          d.run && d.field && !d.view.showMode && time !== d.time
+            ? fieldAtRun(d.run, time)
+            : d.field,
         view: {
           ...d.view,
           layer: this.film?.layer ?? d.view.layer,
@@ -586,8 +564,7 @@ export class LabRenderer {
         },
       };
     };
-    const width = this.host.clientWidth,
-      height = this.host.clientHeight;
+
     if (this.data.compare || this.data.mediaPane) {
       const old = this.rig.camera.aspect,
         position = this.rig.camera.position.clone();
@@ -618,7 +595,12 @@ export class LabRenderer {
         this.rig.camera.updateProjectionMatrix();
         this.renderer.setViewport((i * width) / 2, 0, width / 2, height);
         this.renderer.setScissor((i * width) / 2, 0, width / 2, height);
-        this.prepare(effective(i === 0 ? this.data : this.data.compare!), phase);
+        this.prepare(
+          effective(i === 0 ? this.data : this.data.compare!),
+          phase,
+          i,
+          captureMode ? height / this.host.clientHeight : ratio,
+        );
         this.renderer.render(this.scene, this.rig.camera);
       }
       this.renderer.setScissorTest(false);
@@ -627,25 +609,55 @@ export class LabRenderer {
       this.rig.camera.position.copy(position);
       this.rig.camera.updateProjectionMatrix();
     } else {
-      this.prepare(effective(this.data), phase);
+      this.prepare(
+        effective(this.data),
+        phase,
+        0,
+        captureMode ? height / this.host.clientHeight : ratio,
+      );
       this.renderer.render(this.scene, this.rig.camera);
     }
+    Object.assign(this.renderer.domElement.dataset, {
+      physicalCount: String(this.cloud.stats.physicalCount),
+      displayCount: String(this.cloud.stats.displayCount),
+      lod: this.cloud.stats.lod,
+      environment: this.environmentReady ? 'hdr' : 'studio',
+      quality: this.activeQuality,
+    });
     this.dirty = false;
-  };
+  }
   async capture() {
     const w = this.host.clientWidth,
       h = this.host.clientHeight,
+      scale = Math.min(2, 3840 / w),
+      width = Math.round(w * scale),
+      height = Math.round(h * scale);
+    const target = new T.WebGLRenderTarget(width, height, { depthBuffer: true });
+    const previous = this.renderer.getRenderTarget(),
       ratio = this.renderer.getPixelRatio();
-    this.renderer.setPixelRatio(Math.min(2, 3840 / w));
-    this.renderer.setSize(w, h, false);
-    this.renderer.render(this.scene, this.rig.camera);
-    const blob = await new Promise<Blob | null>((r) =>
-      this.renderer.domElement.toBlob(r, 'image/png'),
-    );
+    target.texture.colorSpace = T.SRGBColorSpace;
+    this.renderer.setPixelRatio(1);
+    this.renderer.setRenderTarget(target);
+    this.draw(width, height, true);
+    const pixels = new Uint8Array(width * height * 4);
+    this.renderer.readRenderTargetPixels(target, 0, 0, width, height, pixels);
+    this.renderer.setRenderTarget(previous);
     this.renderer.setPixelRatio(ratio);
-    this.renderer.setSize(w, h, false);
+    this.renderer.setViewport(0, 0, w, h);
+    target.dispose();
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d')!,
+      data = ctx.createImageData(width, height);
+    for (let y = 0; y < height; y++)
+      data.data.set(
+        pixels.subarray((height - 1 - y) * width * 4, (height - y) * width * 4),
+        y * width * 4,
+      );
+    ctx.putImageData(data, 0, 0);
     this.dirty = true;
-    return blob;
+    return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
   }
   dispose() {
     this.disposed = true;
@@ -654,16 +666,31 @@ export class LabRenderer {
     this.rig.dispose();
     this.host.removeEventListener('pointerdown', this.pointerDown);
     this.host.removeEventListener('pointerup', this.pointerUp);
+    this.scene.remove(this.cloud.root, this.compareCloud.root);
+    this.cloud.dispose();
+    this.compareCloud.dispose();
+    const geometries = new Set<T.BufferGeometry>(),
+      materials = new Set<T.Material>();
     this.scene.traverse((o) => {
+      if (o instanceof T.DirectionalLight) o.shadow.dispose();
       if (o instanceof T.Mesh || o instanceof T.Line) {
-        o.geometry.dispose();
-        (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose());
+        geometries.add(o.geometry);
+        (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => materials.add(m));
       }
     });
+    Object.values(this.materials).forEach((m) => {
+      if (m instanceof T.Material) materials.add(m);
+    });
+    geometries.forEach((g) => g.dispose());
+    materials.forEach((m) => m.dispose());
+    this.fieldGPU.dispose();
+    this.instrument.plate.customDepthMaterial?.dispose();
     this.materials.brush.dispose();
     this.materials.roughness.dispose();
+    this.materials.fiber.dispose();
     this.env.dispose();
     this.renderer.dispose();
+    this.renderer.forceContextLoss();
     this.renderer.domElement.remove();
   }
 }

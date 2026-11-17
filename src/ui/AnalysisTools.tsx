@@ -1,3 +1,4 @@
+import { PARTICLE_PRESETS, materialId } from '../particles/presets';
 import type { Experiment } from '../experiment/useExperiment';
 import type { ViewSettings } from '../experiment/types';
 import { SelectField as S } from './Fields';
@@ -102,7 +103,8 @@ export function AnalysisTools({
             .map((g) => (
               <div key={g.species}>
                 <span>
-                  {g.species ? '소금' : '규사'} · {g.count}개
+                  {PARTICLE_PRESETS[materialId(e.run!.config.grains, g.species as 0 | 1)].label} ·{' '}
+                  {g.count}개
                 </span>
                 <strong>
                   {(g.meanDistance * 1000).toFixed(3)} <small>mm 이동</small>

@@ -1,3 +1,4 @@
+import { ParticleDisplay } from './ui/ParticleDisplay';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Camera,
@@ -30,7 +31,15 @@ import { LabViewport } from './render/LabViewport';
 import { LabRenderer, type RenderData } from './render/LabRenderer';
 import { responseField } from './solver/response';
 import { sampleMode } from './solver/modal';
-import { decodeSession, download, encodeSession, particlesCSV, sweepCSV } from './io/session';
+import {
+  decodeSession,
+  decodeBinarySession,
+  encodeBinarySession,
+  download,
+  encodeSession,
+  particlesCSV,
+  sweepCSV,
+} from './io/session';
 import { fieldAtRun } from './simulation/particles';
 import { PART_SPECS } from './scene/parts';
 import { useDirector } from './animation/useDirector';
@@ -136,11 +145,12 @@ export default function App() {
     run: e.run,
     time: e.time,
     view: film.director.id
-      ? { ...view, structure: 'assembled' }
+      ? { ...view, structure: 'assembled', showMode: false }
       : space === 'device'
         ? { ...view, layer: 'material' }
         : view,
-    animate: false,
+    animate: e.playing,
+    currentTime: comparison ? undefined : e.currentTime,
     paint,
     director: film.director,
     focusRegion:
@@ -194,7 +204,7 @@ export default function App() {
   }
   function startSequence(id: SequenceId) {
     if (id === 'resonance' || id === 'comparison') setSpace('analyze');
-    if (id === 'formation') setSpace('experiment');
+    if (id === 'formation' || id === 'macro') setSpace('experiment');
     if (id === 'comparison') {
       m.setSync(true);
       m.setOverlay(false);
@@ -219,15 +229,20 @@ export default function App() {
   async function capture() {
     const blob = await api.current?.capture();
     if (blob) {
-      download(blob, 'chladni-v03.png');
+      download(blob, 'chladni-v04.png');
       setToast('3D 장면을 저장했습니다.');
     }
   }
   async function loadSession(file?: File) {
     if (!file) return;
     try {
-      if (file.size > 60 * 1024 * 1024) throw Error('60 MB 이하 세션을 선택하세요.');
-      const loaded = decodeSession(await file.text());
+      if (file.size > 256 * 1024 * 1024) throw Error('256 MB 이하 세션을 선택하세요.');
+      const binary =
+        file.name.endsWith('.chladni') ||
+        new TextDecoder().decode(await file.slice(0, 8).arrayBuffer()) === 'CHLDN04\0';
+      const loaded = binary
+        ? decodeBinarySession(await file.arrayBuffer())
+        : decodeSession(await file.text());
       stopSequence();
       if (loaded.active) e.loadRecord(loaded.active);
       else e.change(loaded.config);
@@ -277,8 +292,18 @@ export default function App() {
               <button
                 onClick={() =>
                   download(
+                    encodeBinarySession(e.config, e.records, e.snapshot()),
+                    'chladni-session.chladni',
+                  )
+                }
+              >
+                실험 바이너리 저장
+              </button>
+              <button
+                onClick={() =>
+                  download(
                     encodeSession(e.config, e.records, e.snapshot()),
-                    'chladni-session-v3.json',
+                    'chladni-session-v4.json',
                   )
                 }
               >
@@ -360,6 +385,7 @@ export default function App() {
                 comparison={comparison}
                 setComparison={(s) => {
                   stopSequence();
+                  e.setPlaying(false);
                   setComparison(s);
                   setView((v) => ({ ...v, camera: 'top', structure: 'assembled' }));
                   api.current?.rig.preset('top');
@@ -441,7 +467,12 @@ export default function App() {
               )}
             </div>
           </div>
-          <section className="stage" aria-label="가상 실험실">
+          <section
+            className="stage"
+            aria-label="가상 실험실"
+            data-modal-solves={e.cache.modalSolves}
+            data-modal-reuses={e.cache.modalReuses}
+          >
             <LabViewport
               data={data}
               api={api}
@@ -456,8 +487,20 @@ export default function App() {
                     ? '판 FEM · 입자 운동 근사'
                     : '판 FEM · 초기 입자 배치'
                   : '중앙 구동 장비 · 설계 미리보기'}
-              {view.showMode && ' · 고유모드 1 µm 정규화'}
+              {view.showMode && space === 'analyze' && !presentation && ' · 고유모드 1 µm 정규화'}
               {presentation?.runProgress != null && ` · 결과 재생 ${previewTime.toFixed(2)} s`}
+            </div>
+            <div className="particle-caption">
+              {view.showMode && !presentation ? (
+                '고유모드 형상 · 입자 숨김'
+              ) : (
+                <>
+                  {(view.particleVisual?.count || e.config.grains.count).toLocaleString()}개 표시 ·{' '}
+                  {view.particleVisual?.mode === 'actual'
+                    ? '실제 크기'
+                    : `관찰 ×${view.particleVisual?.displayMagnification ?? 2.5} · 최소 ${view.particleVisual?.minimumPixelDiameter ?? 1.8} px`}
+                </>
+              )}
             </div>
             {showingMedia && <MediaPreview m={m} />}
             {paint && (
@@ -483,7 +526,11 @@ export default function App() {
                     key={id}
                     onClick={() => {
                       film.director.interrupt();
-                      setView((v) => ({ ...v, camera: id }));
+                      setView((v) => ({
+                        ...v,
+                        camera: id,
+                        ...(id === 'macro' ? { gain: 1 } : {}),
+                      }));
                       api.current?.rig.preset(id);
                     }}
                   >
@@ -519,7 +566,7 @@ export default function App() {
                 )}
                 <span>
                   변위 표시 ×{presentation?.gain?.toFixed(0) ?? view.gain}
-                  {film.director.id ? ' · 연출 시간' : ''}
+                  {film.director.id ? ' · 연출 시간' : ' · 정지 위상'}
                 </span>
               </div>
             </div>
@@ -536,17 +583,7 @@ export default function App() {
                 <small>개념 기구 · 실측 자료 미제공</small>
               </div>
             )}
-            {directorOpen && (
-              <DirectorControls
-                film={{ ...film, stop: stopSequence }}
-                onStart={startSequence}
-                hasField={!!e.field}
-                hasRun={!!e.run}
-                hasMedia={!!m.media && !!e.field}
-                onClose={() => setDirectorOpen(false)}
-              />
-            )}
-            {e.busy && (
+            {e.busy && e.busyKind !== 'field' && (
               <div className="compute-overlay glass" role="status">
                 <strong>{e.status}</strong>
                 <progress value={e.progress} max="1" />
@@ -561,7 +598,20 @@ export default function App() {
               </button>
             )}
           </section>
-          <div className="simulation-controls">
+          <div className="scene-dock">
+            <ParticleDisplay view={view} setView={setView} grains={e.config.grains} />
+            {directorOpen && (
+              <DirectorControls
+                film={{ ...film, stop: stopSequence }}
+                onStart={startSequence}
+                hasField={!!e.field}
+                hasRun={!!e.run}
+                hasMedia={!!m.media && !!e.field}
+                onClose={() => setDirectorOpen(false)}
+              />
+            )}
+          </div>
+          <div className="simulation-controls glass">
             <button
               className="play-control"
               aria-label={e.playing ? '일시정지' : '재생'}
@@ -602,7 +652,7 @@ export default function App() {
               type="range"
               min="0"
               max={e.config.drive.duration}
-              step=".05"
+              step=".001"
               value={e.time}
               disabled={!e.run}
               onChange={(ev) => {
@@ -675,7 +725,7 @@ export default function App() {
         ref={sessionInput}
         aria-label="세션 파일"
         type="file"
-        accept=".json"
+        accept=".json,.chladni"
         onChange={(ev) => {
           void loadSession(ev.target.files?.[0]);
           ev.target.value = '';
@@ -712,6 +762,14 @@ export default function App() {
         <p>
           역패턴을 생성하는 검증된 유동 모델이 없습니다. 역 클라드니는 실측 사진·영상으로 비교하며,
           생성한 역패턴을 계산 결과로 제시하지 않습니다. 사진의 원근 정합은 지원하지 않습니다.
+        </p>
+        <h3>표시와 계산</h3>
+        <p>
+          입자는 최대 50,000개를 실제 적분하고 최대 100,000개를 표시합니다. 추가 표시 표본은 시각적
+          표본이며 질량과 통계에 포함하지 않습니다. 입자군 물성은 대표값으로 실측 보정 전입니다.
+        </p>
+        <p>
+          FEM 계산 {e.cache.modalSolves}회 · 모드 재사용 {e.cache.modalReuses}회
         </p>
         <h3>장면 연출</h3>
         <p>

@@ -28,7 +28,7 @@ export function metrics(run: Run, time: number) {
     time: frame.time,
   };
 }
-export function densityGrid(positions: number[], size = 16) {
+export function densityGrid(positions: ArrayLike<number>, size = 16) {
   const bins = new Array<number>(size * size).fill(0);
   for (let i = 0; i < positions.length; i += 2)
     bins[

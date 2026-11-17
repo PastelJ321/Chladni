@@ -1,3 +1,11 @@
+import { useState } from 'react';
+import {
+  PARTICLE_PRESETS,
+  materialId,
+  applyParticlePreset,
+  expectedMass,
+  estimateCount,
+} from '../particles/presets';
 import type { Experiment } from '../experiment/useExperiment';
 import {
   cloneConfig,
@@ -158,6 +166,7 @@ export function ConfigurationPanel({
   paint: boolean;
   setPaint: (p: boolean) => void;
 }) {
+  const [targetMass, setTargetMass] = useState(1);
   const c = e.config,
     d = c.drive,
     g = c.grains;
@@ -180,6 +189,11 @@ export function ConfigurationPanel({
         <h2>실험 조건</h2>
         <span>중앙 구동판</span>
       </div>
+      <ol className="workflow">
+        <li aria-current={!e.modal ? 'step' : undefined}>1 스윕</li>
+        <li aria-current={e.modal && !e.run ? 'step' : undefined}>2 주파수</li>
+        <li aria-current={e.run ? 'step' : undefined}>3 입자 실험</li>
+      </ol>
       <div className="config-scroll">
         <section className="frequency-section">
           <label className="frequency-input">
@@ -199,6 +213,13 @@ export function ConfigurationPanel({
               <span>Hz</span>
             </div>
           </label>
+          <N
+            label="구동 진폭"
+            value={d.displacement * 1e6}
+            unit="µm"
+            step={0.1}
+            onChange={(v) => edit('drive', 'displacement', v / 1e6)}
+          />
           <details className="sweep-settings">
             <summary>
               스윕 범위 · {d.start}–{d.end} Hz
@@ -222,13 +243,6 @@ export function ConfigurationPanel({
             <summary>구동 세부 · {d.duration} s</summary>
             <div className="field-grid">
               <N
-                label="구동 진폭"
-                value={d.displacement * 1e6}
-                unit="µm"
-                step={0.1}
-                onChange={(v) => edit('drive', 'displacement', v / 1e6)}
-              />
-              <N
                 label="실험 시간"
                 value={d.duration}
                 unit="s"
@@ -249,14 +263,22 @@ export function ConfigurationPanel({
         </section>
         <div className="section-heading">
           <h3>혼합 입자</h3>
+          <span>
+            {g.count.toLocaleString()}개 · 약 {(expectedMass(g) * g.count * 1000).toFixed(2)} g
+          </span>
         </div>
         <S
           label="입자 조합"
           value={g.kind}
           options={[
-            ['mixture', '규사 + 소금'],
-            ['sand', '규사만'],
-            ['salt', '소금만'],
+            [
+              'mixture',
+              PARTICLE_PRESETS[materialId(g, 0)].label +
+                ' + ' +
+                PARTICLE_PRESETS[materialId(g, 1)].label,
+            ],
+            ['sand', PARTICLE_PRESETS[materialId(g, 0)].label + '만'],
+            ['salt', PARTICLE_PRESETS[materialId(g, 1)].label + '만'],
           ]}
           onChange={(v) => edit('grains', 'kind', v)}
         />
@@ -264,7 +286,8 @@ export function ConfigurationPanel({
           .filter((id) => g.kind === 'mixture' || g.kind === id)
           .map((id) => {
             const group = particleGroup(g, id === 'salt' ? 1 : 0),
-              name = id === 'sand' ? '규사' : '소금';
+              preset = PARTICLE_PRESETS[materialId(g, id === 'salt' ? 1 : 0)],
+              name = preset.label;
             return (
               <section className={`grain-card ${id}`} key={id}>
                 <h3>
@@ -276,23 +299,14 @@ export function ConfigurationPanel({
                   </small>
                 </h3>
                 <S
-                  label={`${name} 체 구간`}
-                  value={group.sieve}
-                  options={[
-                    ['custom', '직접 설정'],
-                    ['legacy', 'v0.2 조건'],
-                    ...SIEVE_RANGES.map(
-                      ([a, b]) => [`${a}–${b}`, `${a}–${b} µm`] as [string, string],
-                    ),
-                  ]}
+                  label={`${id === 'sand' ? '첫째' : '둘째'} 입자 종류`}
+                  value={materialId(g, id === 'salt' ? 1 : 0)}
+                  options={Object.entries(PARTICLE_PRESETS).map(([id, p]) => [id, p.label])}
                   onChange={(v) => {
-                    const range = SIEVE_RANGES.find(([a, b]) => v === `${a}–${b}`);
-                    if (range) {
-                      const n = cloneConfig(c);
-                      n.grains.groups = independentGroups(n.grains);
-                      n.grains.groups[id] = sieveGroup(group, range[0], range[1]);
-                      e.change(n);
-                    }
+                    const n = cloneConfig(c);
+                    n.grains.groups = independentGroups(n.grains);
+                    n.grains.groups[id] = applyParticlePreset(v as keyof typeof PARTICLE_PRESETS);
+                    e.change(n);
                   }}
                 />
                 <div className="field-grid">
@@ -311,7 +325,28 @@ export function ConfigurationPanel({
                   />
                 </div>
                 <details>
-                  <summary>밀도·마찰</summary>
+                  <summary>체 구간·밀도·마찰</summary>{' '}
+                  <S
+                    label={`${name} 체 구간`}
+                    value={group.sieve}
+                    options={[
+                      ['custom', '직접 설정'],
+                      ['legacy', 'v0.2 조건'],
+                      ...SIEVE_RANGES.map(
+                        ([a, b]) => [`${a}–${b}`, `${a}–${b} µm`] as [string, string],
+                      ),
+                    ]}
+                    onChange={(v) => {
+                      const range = SIEVE_RANGES.find(([a, b]) => v === `${a}–${b}`);
+                      if (range) {
+                        const n = cloneConfig(c);
+                        n.grains.groups = independentGroups(n.grains);
+                        n.grains.groups[id] = sieveGroup(group, range[0], range[1]);
+                        e.change(n);
+                      }
+                    }}
+                  />
+                  <p className="help">{preset.source}</p>
                   <N
                     label={`${name} 밀도`}
                     value={group.density}
@@ -336,6 +371,23 @@ export function ConfigurationPanel({
               </section>
             );
           })}
+        <details>
+          <summary>입자량 · 질량으로 추정</summary>
+          <N label="목표 질량" value={targetMass} unit="g" step={0.1} onChange={setTargetMass} />
+          <p className="help">
+            예상 {estimateCount(g, targetMass / 1000).toLocaleString()}개 · 구형 체적 근사
+          </p>
+          <button
+            disabled={
+              estimateCount(g, targetMass / 1000) < 20 ||
+              estimateCount(g, targetMass / 1000) > 50000
+            }
+            onClick={() => edit('grains', 'count', estimateCount(g, targetMass / 1000))}
+          >
+            예상 입자 수 적용
+          </button>
+          <p className="help">계산 한도 50,000개. 혼합 비율은 개수 기준입니다.</p>
+        </details>
         <p className="help">
           체 구간은 명목 프리셋입니다. 실제 체눈과 선별 입경은 실험 기록으로 확인하세요.
         </p>
@@ -343,7 +395,7 @@ export function ConfigurationPanel({
           <N label="입자 수" value={g.count} onChange={(v) => edit('grains', 'count', v)} />
           {g.kind === 'mixture' && (
             <N
-              label="소금 혼합 비율"
+              label="둘째 입자 혼합 비율"
               value={g.ratio * 100}
               unit="%"
               onChange={(v) => edit('grains', 'ratio', v / 100)}
@@ -389,6 +441,20 @@ export function ConfigurationPanel({
           {e.status}
           {e.busy && ` · ${Math.round(e.progress * 100)}%`}
         </div>
+        {e.run?.motion && (
+          <div className="motion-result" role="note">
+            {e.run.motion.state === 'undriven'
+              ? '입력 진폭 0 · 무구동 결과'
+              : e.run.motion.state === 'below-threshold'
+                ? '모델 이동 임계 미도달'
+                : e.run.motion.state === 'stationary'
+                  ? '모델상 유의한 이동 없음'
+                  : `${e.run.motion.movingCount.toLocaleString()}개 이동 관찰`}
+            <small>
+              최대 Γ {e.run.motion.maxGamma.toFixed(2)} · 기록 {e.run.recordHz?.toFixed(1) ?? 20} Hz
+            </small>
+          </div>
+        )}
         {e.error && (
           <p role="alert" className="error">
             {e.error}

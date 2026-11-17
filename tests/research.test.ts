@@ -1,3 +1,4 @@
+import { responseKey } from '../src/experiment/config';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_CONFIG, cloneConfig, configKey } from '../src/experiment/config';
@@ -164,7 +165,10 @@ test('quasi-steady sweep stores the same FEM states used by particle integration
   assert.equal(run.fields.at(-1)!.frequency, next.drive.end);
   assert.ok(
     run.fields.every(
-      (f) => f.source === 'FEM' && f.key === run.key && f.amplitude.every(Number.isFinite),
+      (f) =>
+        f.source === 'FEM' &&
+        f.key === responseKey(run.config, f.frequency) &&
+        f.amplitude.every(Number.isFinite),
     ),
   );
   assert.notDeepEqual(run.fields[0].amplitude, run.fields.at(-1)!.amplitude);

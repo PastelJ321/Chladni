@@ -9,6 +9,10 @@ export function useDirector() {
       last = performance.now(),
       notify = last,
       revision = ref.current.revision;
+    const visibility = () => {
+      last = performance.now();
+    };
+    document.addEventListener('visibilitychange', visibility);
     const tick = (now: number) => {
       if (!document.hidden) ref.current.tick((now - last) / 1000, speed);
       last = now;
@@ -20,7 +24,10 @@ export function useDirector() {
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener('visibilitychange', visibility);
+    };
   }, [speed]);
   const act = (fn: () => void) => {
     fn();
@@ -32,7 +39,7 @@ export function useDirector() {
     setSpeed,
     start: (id: SequenceId, origin: CameraPose) => act(() => ref.current.start(id, origin)),
     pause: () => act(() => ref.current.pause()),
-    resume: () => act(() => ref.current.resume()),
+    resume: () => act(() => ref.current.resume(speed)),
     stop: () => act(() => ref.current.stop()),
     seek: (t: number) => act(() => ref.current.seek(t)),
   };

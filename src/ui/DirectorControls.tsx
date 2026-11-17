@@ -82,9 +82,9 @@ export function DirectorControls({
           value={film.speed}
           onChange={(e) => film.setSpeed(+e.target.value)}
         >
-          {[0.5, 1, 1.5].map((s) => (
+          {[-1, 0.25, 0.5, 1, 1.5].map((s) => (
             <option key={s} value={s}>
-              {s}×
+              {s < 0 ? '역재생 1×' : `${s}×`}
             </option>
           ))}
         </select>

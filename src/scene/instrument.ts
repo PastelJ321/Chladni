@@ -1,3 +1,4 @@
+import { createPlateGeometry } from './plateGeometry';
 import * as T from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { createMaterials } from './materials';
@@ -96,13 +97,15 @@ export function createInstrument(materials: ReturnType<typeof createMaterials>) 
       ].map((v) => new T.Vector2(...(v as [number, number])));
     return mesh(new T.LatheGeometry(p, 80), mat, id, 0, y);
   }
-  box(2.25, 0.12, 2.05, materials.darkMetal, 'support', 0, 0.21, 0, 0.05);
+  box(2.25, 0.12, 2.05, materials.darkMetal, 'support', 0, 0.21, 0, 0.035);
+  box(2.18, 0.025, 1.98, materials.black, 'support', 0, 0.281, 0, 0.02);
   for (const x of [-0.87, 0.87])
     for (const z of [-0.77, 0.77]) {
       cylinder(0.15, 0.17, 0.15, materials.rubber, 'support', 0.075, x, z);
       cylinder(0.047, 0.047, 0.025, materials.steel, 'support', 0.282, x, z, 6);
     }
-  cylinder(0.52, 0.52, 0.08, materials.steel, 'magnet', 0.34);
+  annulus(0.12, 0.53, 0.08, materials.steel, 'magnet', 0.34);
+  ring(0.51, 0.009, materials.steel, 'magnet', 0.385);
   cylinder(0.5, 0.5, 0.32, materials.ceramic, 'magnet', 0.54);
   annulus(0.24, 0.52, 0.18, materials.steel, 'magnet', 0.79);
   cylinder(0.19, 0.19, 0.35, materials.steel, 'magnet', 0.77);
@@ -118,7 +121,8 @@ export function createInstrument(materials: ReturnType<typeof createMaterials>) 
     materials.copper,
     'coil',
   );
-  ring(0.75, 0.04, materials.darkMetal, 'frame', 1.19);
+  annulus(0.65, 0.82, 0.045, materials.darkMetal, 'frame', 1.19);
+  ring(0.79, 0.008, materials.steel, 'frame', 1.216);
   ring(0.67, 0.058, materials.rubber, 'surround', 1.225);
   ring(0.59, 0.018, materials.rubber, 'surround', 1.207);
   mesh(
@@ -129,6 +133,12 @@ export function createInstrument(materials: ReturnType<typeof createMaterials>) 
         [0.39, 1.13],
         [0.53, 1.19],
         [0.61, 1.205],
+        [0.61, 1.213],
+        [0.53, 1.198],
+        [0.39, 1.138],
+        [0.25, 1.048],
+        [0.205, 0.998],
+        [0.205, 0.99],
       ].map((v) => new T.Vector2(...(v as [number, number]))),
       96,
     ),
@@ -137,18 +147,21 @@ export function createInstrument(materials: ReturnType<typeof createMaterials>) 
   );
   for (let i = 0; i < 8; i++) {
     const a = (i * Math.PI) / 4,
+      lower = new T.Vector3(Math.sin(a) * 0.46, 0.68, Math.cos(a) * 0.46),
+      upper = new T.Vector3(Math.sin(a) * 0.735, 1.19, Math.cos(a) * 0.735),
+      center = lower.clone().add(upper).multiplyScalar(0.5),
       rib = box(
-        0.08,
-        0.6,
+        0.074,
+        lower.distanceTo(upper),
         0.055,
         materials.darkMetal,
         'frame',
-        Math.sin(a) * 0.59,
-        0.93,
-        Math.cos(a) * 0.59,
-        0.012,
+        center.x,
+        center.y,
+        center.z,
+        0.008,
       );
-    rib.rotation.set(-Math.cos(a) * 0.45, 0, Math.sin(a) * 0.45);
+    rib.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), upper.sub(lower).normalize());
     cylinder(
       0.027,
       0.027,
@@ -164,29 +177,45 @@ export function createInstrument(materials: ReturnType<typeof createMaterials>) 
   cylinder(0.23, 0.2, 0.12, materials.aluminum, 'coupler', 1.16);
   cylinder(0.09, 0.16, 0.15, materials.aluminum, 'coupler', 1.295);
   cylinder(0.036, 0.036, 0.82, materials.steel, 'coupler', 1.77);
-  cylinder(0.13, 0.13, 0.046, materials.steel, 'coupler', 2.195);
-  const plateGeometry = new T.BoxGeometry(3.6, 0.024, 3.6, 64, 1, 64),
-    idx = plateGeometry.index!,
-    verts = plateGeometry.attributes.position,
-    filtered: number[] = [];
-  for (let i = 0; i < idx.count; i += 3) {
-    const ids = [idx.getX(i), idx.getX(i + 1), idx.getX(i + 2)];
-    if (
-      Math.hypot(
-        ids.reduce((s, id) => s + verts.getX(id), 0) / 3,
-        ids.reduce((s, id) => s + verts.getZ(id), 0) / 3,
-      ) > 0.046
-    )
-      filtered.push(...ids);
-  }
-  plateGeometry.setIndex(filtered);
+  annulus(0.035, 0.13, 0.046, materials.steel, 'coupler', 2.195);
+  for (let i = 0; i < 5; i++) ring(0.038, 0.002, materials.steel, 'coupler', 2.105 + i * 0.012);
+  const plateGeometry = createPlateGeometry();
   const plate = mesh(plateGeometry, materials.aluminum, 'plate', 0, PLATE_Y),
     restPositions = Float32Array.from(plateGeometry.attributes.position.array);
   annulus(0.042, 0.13, 0.01, materials.steel, 'washerBottom', PLATE_Y - 0.017);
   annulus(0.042, 0.13, 0.018, materials.steel, 'washerTop', PLATE_Y + 0.021);
   cylinder(0.036, 0.036, 0.14, materials.steel, 'bolt', 2.203);
-  cylinder(0.075, 0.075, 0.055, materials.steel, 'bolt', 2.2975, 0, 0, 6);
-  cylinder(0.026, 0.026, 0.003, materials.black, 'bolt', 2.326, 0, 0, 6);
+  const headShape = new T.Shape(),
+    socket = new T.Path();
+  for (let i = 0; i <= 6; i++) {
+    const a = (i * Math.PI) / 3,
+      x = Math.cos(a) * 0.075,
+      y = Math.sin(a) * 0.075;
+    i ? headShape.lineTo(x, y) : headShape.moveTo(x, y);
+  }
+  for (let i = 0; i <= 6; i++) {
+    const a = (-i * Math.PI) / 3,
+      x = Math.cos(a) * 0.027,
+      y = Math.sin(a) * 0.027;
+    i ? socket.lineTo(x, y) : socket.moveTo(x, y);
+  }
+  headShape.holes.push(socket);
+  const head = mesh(
+    new T.ExtrudeGeometry(headShape, {
+      depth: 0.045,
+      steps: 1,
+      bevelEnabled: true,
+      bevelSize: 0.003,
+      bevelThickness: 0.005,
+      bevelSegments: 2,
+      curveSegments: 1,
+    }),
+    materials.steel,
+    'bolt',
+    0,
+    2.275,
+  );
+  head.rotation.x = -Math.PI / 2;
   const thread = [];
   for (let i = 0; i <= 240; i++) {
     const a = (i / 240) * Math.PI * 20;
@@ -211,5 +240,14 @@ export function createInstrument(materials: ReturnType<typeof createMaterials>) 
     ].map((v) => new T.Vector3(...(v as [number, number, number]))),
   );
   mesh(new T.TubeGeometry(cable, 60, 0.014, 8, false), materials.rubber, 'support');
+  const relief = mesh(
+    new T.CylinderGeometry(0.028, 0.037, 0.14, 24),
+    materials.rubber,
+    'support',
+    0.18,
+    0.72,
+    0.565,
+  );
+  relief.rotation.x = Math.PI * 0.38;
   return { root, parts, plate, restPositions, originals };
 }

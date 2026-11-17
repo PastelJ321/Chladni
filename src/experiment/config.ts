@@ -58,7 +58,7 @@ export const DEFAULT_CONFIG: Config = {
     saltDensity: 2160,
     shape: 1,
     friction: 0.35,
-    count: 1800,
+    count: 20000,
     seed: 240519,
     ratio: 0.5,
     distribution: 'uniform',
@@ -74,17 +74,51 @@ export const DEFAULT_VIEW: ViewSettings = {
   sectionPosition: 0,
   explosion: 1,
   assembly: 1,
-  gain: 800,
+  gain: 200,
   mode: 0,
   showMode: false,
   particles: true,
   selected: null,
   quality: 'standard',
   phase: 0,
+  particleVisual: {
+    mode: 'observe',
+    apparentSize: 1,
+    minimumPixelDiameter: 1.8,
+    displayMagnification: 2.5,
+    count: 0,
+    LOD: 'auto',
+    shadingMode: 'material',
+  },
 };
 export const cloneConfig = (c: Config): Config => JSON.parse(JSON.stringify(c));
 export const configKey = (c: Config) => JSON.stringify(c);
-export const plateKey = (p: Config['plate']) => JSON.stringify(p);
+// Only stiffness/mass/constraint inputs affect the eigensystem. Damping belongs to response.
+export const plateKey = (p: Config['plate']) =>
+  JSON.stringify([
+    p.width,
+    p.height,
+    p.thickness,
+    p.young,
+    p.density,
+    p.poisson,
+    p.mesh,
+    p.boundary,
+    p.boundary === 'center' ? Math.round(p.supportX * p.mesh) : 0,
+    p.boundary === 'center' ? Math.round(p.supportY * p.mesh) : 0,
+  ]);
+export const legacyPlateKey = (p: Config['plate']) => JSON.stringify(p);
+export const responseKey = (c: Config, frequency = c.drive.frequency) =>
+  JSON.stringify([
+    plateKey(c.plate),
+    c.plate.damping,
+    c.drive.kind,
+    c.drive.kind === 'base' ? c.drive.displacement : c.drive.force,
+    c.drive.kind === 'force' ? [c.drive.x, c.drive.y] : null,
+    frequency,
+  ]);
+export const sweepKey = (c: Config) =>
+  JSON.stringify([responseKey(c, 0), c.drive.start, c.drive.end, c.drive.samples]);
 export function validateConfig(c: Config) {
   const p = c?.plate,
     d = c?.drive,
@@ -129,12 +163,14 @@ export function validateConfig(c: Config) {
         !within(group.spread, 0, 0.8) ||
         !within(group.density, 500, 10000) ||
         !within(group.friction, 0.05, 1) ||
-        !within(group.shape, 0.5, 2)
+        !within(group.shape, 0.5, 2) ||
+        (group.material !== undefined &&
+          !['sand', 'salt', 'sugar', 'glass', 'custom'].includes(group.material))
       )
         throw Error('입자군별 조건을 확인하세요.');
     }
   if (
-    !within(g.count, 20, 5000) ||
+    !within(g.count, 20, 50000) ||
     !Number.isInteger(g.count) ||
     !within(g.diameter, 0.00005, 0.002) ||
     !within(g.spread, 0, 0.8) ||
