@@ -1,0 +1,451 @@
+{
+  "date": "2026-11-24",
+  "browser": "153.0.8010.12",
+  "backendRequested": "metal",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "cpu": "Apple M5",
+  "logicalCores": 10,
+  "systemRAM": 17179869184,
+  "durationPerRunSeconds": 1,
+  "measurement": "3500 ms continuous GPU-interpolated playback after 18 warmup frames; 1200x700 CSS viewport; DPR 1.5 standard / 1 low; adaptive display disabled for comparable measurements",
+  "results": [
+    {
+      "displayCount": 5000,
+      "physicalCount": 5000,
+      "representation": "one visual per integrated particle",
+      "quality": "standard",
+      "camera": "hero",
+      "viewportCSS": [
+        1200,
+        700
+      ],
+      "drawingBuffer": [
+        1800,
+        1050
+      ],
+      "pixelRatio": 1.5,
+      "backend": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5, Unspecified Version)",
+      "frames": 211,
+      "averageFPS": 60.00113746232156,
+      "meanFrameMs": 16.666350710900474,
+      "p95FrameMs": 16.700000000000273,
+      "cpuSubmitMs": 2.2037914708892314,
+      "gpuMs": 8.887789980952382,
+      "gpuSamples": 210,
+      "gpuTimerAvailable": true,
+      "simulateParticlesMs": 58.39999997615814,
+      "workerRoundTripMs": 59.300000071525574,
+      "setupAndCalculationMs": 84.79999995231628,
+      "mainJSHeapBytes": 29112867,
+      "recordingBytes": 1260000,
+      "jsonBytes": 2079751,
+      "binaryBytes": 1660089,
+      "jsonExportMs": 22.199999928474426,
+      "binaryExportMs": 3.200000047683716,
+      "recordHz": 20,
+      "gpuAssets": {
+        "geometryBytes": 5751084,
+        "textureBytes": 9207909,
+        "shadowEstimateBytes": 16777216,
+        "totalEstimatedBytes": 31736209,
+        "excludes": "default framebuffer, driver overhead, global LTC textures"
+      },
+      "positionUploadBytes": 4500000,
+      "detailUploadBytes": 0,
+      "detailCountLastBatch": 0,
+      "lod": "splats",
+      "renderCalls": 59,
+      "motion": {
+        "state": "moving",
+        "maxGamma": 16.92444983347569,
+        "movingCount": 4757,
+        "maxDistance": 0.007714291049928464,
+        "totalMass": 0.00032505403969789885
+      },
+      "resourcesAfterDispose": {
+        "geometries": 1,
+        "textures": 3
+      }
+    },
+    {
+      "displayCount": 20000,
+      "physicalCount": 20000,
+      "representation": "one visual per integrated particle",
+      "quality": "standard",
+      "camera": "hero",
+      "viewportCSS": [
+        1200,
+        700
+      ],
+      "drawingBuffer": [
+        1800,
+        1050
+      ],
+      "pixelRatio": 1.5,
+      "backend": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5, Unspecified Version)",
+      "frames": 211,
+      "averageFPS": 60.00284373666998,
+      "meanFrameMs": 16.665876777251185,
+      "p95FrameMs": 16.800000000000182,
+      "cpuSubmitMs": 2.37061611679493,
+      "gpuMs": 9.498847495238099,
+      "gpuSamples": 210,
+      "gpuTimerAvailable": true,
+      "simulateParticlesMs": 170.79999995231628,
+      "workerRoundTripMs": 171.89999997615814,
+      "setupAndCalculationMs": 0,
+      "mainJSHeapBytes": 59837112,
+      "recordingBytes": 5040000,
+      "jsonBytes": 7804817,
+      "binaryBytes": 6125197,
+      "jsonExportMs": 76.5,
+      "binaryExportMs": 8.199999928474426,
+      "recordHz": 20,
+      "gpuAssets": {
+        "geometryBytes": 6486084,
+        "textureBytes": 9207909,
+        "shadowEstimateBytes": 16777216,
+        "totalEstimatedBytes": 32471209,
+        "excludes": "default framebuffer, driver overhead, global LTC textures"
+      },
+      "positionUploadBytes": 18000000,
+      "detailUploadBytes": 0,
+      "detailCountLastBatch": 0,
+      "lod": "splats",
+      "renderCalls": 59,
+      "motion": {
+        "state": "moving",
+        "maxGamma": 16.92444983347569,
+        "movingCount": 19002,
+        "maxDistance": 0.007813145132244076,
+        "totalMass": 0.001303439394124618
+      },
+      "resourcesAfterDispose": {
+        "geometries": 1,
+        "textures": 3
+      }
+    },
+    {
+      "displayCount": 50000,
+      "physicalCount": 50000,
+      "representation": "one visual per integrated particle",
+      "quality": "standard",
+      "camera": "hero",
+      "viewportCSS": [
+        1200,
+        700
+      ],
+      "drawingBuffer": [
+        1800,
+        1050
+      ],
+      "pixelRatio": 1.5,
+      "backend": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5, Unspecified Version)",
+      "frames": 211,
+      "averageFPS": 60.00284373666998,
+      "meanFrameMs": 16.665876777251185,
+      "p95FrameMs": 16.799999999999272,
+      "cpuSubmitMs": 2.286255920667784,
+      "gpuMs": 11.481227747619059,
+      "gpuSamples": 210,
+      "gpuTimerAvailable": true,
+      "simulateParticlesMs": 390,
+      "workerRoundTripMs": 392.10000002384186,
+      "setupAndCalculationMs": 0,
+      "mainJSHeapBytes": 61945548,
+      "recordingBytes": 12600000,
+      "jsonBytes": 19255332,
+      "binaryBytes": 15055754,
+      "jsonExportMs": 214.69999992847443,
+      "binaryExportMs": 20.700000047683716,
+      "recordHz": 20,
+      "gpuAssets": {
+        "geometryBytes": 7956084,
+        "textureBytes": 9207909,
+        "shadowEstimateBytes": 16777216,
+        "totalEstimatedBytes": 33941209,
+        "excludes": "default framebuffer, driver overhead, global LTC textures"
+      },
+      "positionUploadBytes": 45000000,
+      "detailUploadBytes": 0,
+      "detailCountLastBatch": 0,
+      "lod": "splats",
+      "renderCalls": 59,
+      "motion": {
+        "state": "moving",
+        "maxGamma": 16.92444983347569,
+        "movingCount": 47355,
+        "maxDistance": 0.007827242500236923,
+        "totalMass": 0.0032615961579861566
+      },
+      "resourcesAfterDispose": {
+        "geometries": 1,
+        "textures": 3
+      }
+    },
+    {
+      "displayCount": 100000,
+      "physicalCount": 50000,
+      "representation": "representative visual expansion",
+      "quality": "standard",
+      "camera": "hero",
+      "viewportCSS": [
+        1200,
+        700
+      ],
+      "drawingBuffer": [
+        1800,
+        1050
+      ],
+      "pixelRatio": 1.5,
+      "backend": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5, Unspecified Version)",
+      "frames": 211,
+      "averageFPS": 60.00113746232159,
+      "meanFrameMs": 16.666350710900467,
+      "p95FrameMs": 16.799999999999272,
+      "cpuSubmitMs": 3.592417065566185,
+      "gpuMs": 11.004897871428579,
+      "gpuSamples": 210,
+      "gpuTimerAvailable": true,
+      "simulateParticlesMs": 372.2000000476837,
+      "workerRoundTripMs": 374.1999999284744,
+      "setupAndCalculationMs": 0,
+      "mainJSHeapBytes": 59290356,
+      "recordingBytes": 12600000,
+      "jsonBytes": 19255346,
+      "binaryBytes": 15055768,
+      "jsonExportMs": 194.40000009536743,
+      "binaryExportMs": 19.799999952316284,
+      "recordHz": 20,
+      "gpuAssets": {
+        "geometryBytes": 10406084,
+        "textureBytes": 9207909,
+        "shadowEstimateBytes": 16777216,
+        "totalEstimatedBytes": 36391209,
+        "excludes": "default framebuffer, driver overhead, global LTC textures"
+      },
+      "positionUploadBytes": 90000000,
+      "detailUploadBytes": 0,
+      "detailCountLastBatch": 0,
+      "lod": "splats",
+      "renderCalls": 59,
+      "motion": {
+        "state": "moving",
+        "maxGamma": 16.92444983347569,
+        "movingCount": 47355,
+        "maxDistance": 0.007827242500236923,
+        "totalMass": 0.0032615961579861566
+      },
+      "resourcesAfterDispose": {
+        "geometries": 1,
+        "textures": 3
+      }
+    },
+    {
+      "displayCount": 100000,
+      "physicalCount": 50000,
+      "representation": "representative visual expansion",
+      "quality": "low",
+      "camera": "hero",
+      "viewportCSS": [
+        1200,
+        700
+      ],
+      "drawingBuffer": [
+        1200,
+        700
+      ],
+      "pixelRatio": 1,
+      "backend": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5, Unspecified Version)",
+      "frames": 211,
+      "averageFPS": 60.00284373666998,
+      "meanFrameMs": 16.665876777251185,
+      "p95FrameMs": 16.700000000000728,
+      "cpuSubmitMs": 3.846445498308299,
+      "gpuMs": 5.9939959047619045,
+      "gpuSamples": 210,
+      "gpuTimerAvailable": true,
+      "simulateParticlesMs": 355.89999997615814,
+      "workerRoundTripMs": 357.89999997615814,
+      "setupAndCalculationMs": 0,
+      "mainJSHeapBytes": 66954876,
+      "recordingBytes": 12600000,
+      "jsonBytes": 19255347,
+      "binaryBytes": 15055769,
+      "jsonExportMs": 191.20000004768372,
+      "binaryExportMs": 18.299999952316284,
+      "recordHz": 20,
+      "gpuAssets": {
+        "geometryBytes": 10406084,
+        "textureBytes": 9207909,
+        "shadowEstimateBytes": 16777216,
+        "totalEstimatedBytes": 36391209,
+        "excludes": "default framebuffer, driver overhead, global LTC textures"
+      },
+      "positionUploadBytes": 90000000,
+      "detailUploadBytes": 0,
+      "detailCountLastBatch": 0,
+      "lod": "splats",
+      "renderCalls": 59,
+      "motion": {
+        "state": "moving",
+        "maxGamma": 16.92444983347569,
+        "movingCount": 47355,
+        "maxDistance": 0.007827242500236923,
+        "totalMass": 0.0032615961579861566
+      },
+      "resourcesAfterDispose": {
+        "geometries": 1,
+        "textures": 3
+      },
+      "macro": false
+    },
+    {
+      "displayCount": 20000,
+      "physicalCount": 20000,
+      "representation": "one visual per integrated particle",
+      "quality": "standard",
+      "camera": "macro",
+      "viewportCSS": [
+        1200,
+        700
+      ],
+      "drawingBuffer": [
+        1800,
+        1050
+      ],
+      "pixelRatio": 1.5,
+      "backend": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5, Unspecified Version)",
+      "frames": 211,
+      "averageFPS": 60.00284373666998,
+      "meanFrameMs": 16.665876777251185,
+      "p95FrameMs": 16.700000000000728,
+      "cpuSubmitMs": 3.2018957420547993,
+      "gpuMs": 12.037715209523807,
+      "gpuSamples": 210,
+      "gpuTimerAvailable": true,
+      "simulateParticlesMs": 155.79999995231628,
+      "workerRoundTripMs": 156.80000007152557,
+      "setupAndCalculationMs": 0,
+      "mainJSHeapBytes": 33779350,
+      "recordingBytes": 5040000,
+      "jsonBytes": 7804817,
+      "binaryBytes": 6125197,
+      "jsonExportMs": 76.10000002384186,
+      "binaryExportMs": 7.699999928474426,
+      "recordHz": 20,
+      "gpuAssets": {
+        "geometryBytes": 6486084,
+        "textureBytes": 9207909,
+        "shadowEstimateBytes": 16777216,
+        "totalEstimatedBytes": 32471209,
+        "excludes": "default framebuffer, driver overhead, global LTC textures"
+      },
+      "positionUploadBytes": 18000000,
+      "detailUploadBytes": 89570756,
+      "detailCountLastBatch": 3505,
+      "lod": "splats + PBR",
+      "renderCalls": 43,
+      "motion": {
+        "state": "moving",
+        "maxGamma": 16.92444983347569,
+        "movingCount": 19002,
+        "maxDistance": 0.007813145132244076,
+        "totalMass": 0.001303439394124618
+      },
+      "resourcesAfterDispose": {
+        "geometries": 1,
+        "textures": 3
+      },
+      "macro": true
+    }
+  ],
+  "uiResults": [
+    {
+      "workspace": "실험",
+      "averageFPS": 58.298259583665114,
+      "meanFrameMs": 17.153170731707316,
+      "p95FrameMs": 16.700000000000728,
+      "frames": 205,
+      "canvasCSS": [
+        1230,
+        713
+      ],
+      "pixelRatio": 1.5,
+      "physicalCount": 20000,
+      "quality": "standard",
+      "lod": "splats",
+      "experimentTime": "3.50 / 8.0 s",
+      "modalSolves": "1",
+      "mainJSHeapBytes": 116782952
+    },
+    {
+      "workspace": "분석",
+      "averageFPS": 60.00284373666998,
+      "meanFrameMs": 16.665876777251185,
+      "p95FrameMs": 16.700000000000728,
+      "frames": 211,
+      "canvasCSS": [
+        1230,
+        713
+      ],
+      "pixelRatio": 1.5,
+      "physicalCount": 20000,
+      "quality": "standard",
+      "lod": "splats",
+      "experimentTime": "7.13 / 8.0 s",
+      "modalSolves": "1",
+      "mainJSHeapBytes": 124733742
+    }
+  ],
+  "contactResults": [
+    {
+      "count": 100,
+      "duration": 0.5,
+      "frequencyHz": 249.625,
+      "elapsedMs": 79.60000002384186,
+      "workerRoundTripMs": 85,
+      "recordingBytes": 97600,
+      "diagnostics": {
+        "impacts": 18920,
+        "energyDissipated": 3.5210481097410347e-7,
+        "particleInteractions": false,
+        "stillAirDrag": false,
+        "maxPenetration": 0.0000295637471072032,
+        "substeps": 3995
+      },
+      "motion": {
+        "state": "moving",
+        "maxGamma": 16.924449833475695,
+        "movingCount": 100,
+        "maxDistance": 0.0005617905559256165,
+        "totalMass": 0.00000713371632236359
+      }
+    },
+    {
+      "count": 500,
+      "duration": 0.5,
+      "frequencyHz": 249.625,
+      "elapsedMs": 271.39999997615814,
+      "workerRoundTripMs": 274.2999999523163,
+      "recordingBytes": 488000,
+      "diagnostics": {
+        "impacts": 84904,
+        "energyDissipated": 0.0000018519259797724603,
+        "particleInteractions": false,
+        "stillAirDrag": false,
+        "maxPenetration": 0.00003284271224476689,
+        "substeps": 3995
+      },
+      "motion": {
+        "state": "moving",
+        "maxGamma": 16.924449833475695,
+        "movingCount": 500,
+        "maxDistance": 0.0005925879704958896,
+        "totalMass": 0.000032890883785644194
+      }
+    }
+  ],
+  "errors": []
+}

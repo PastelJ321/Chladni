@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import os from 'node:os';
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 const mode = process.env.CHLADNI_GPU_MODE ?? 'metal';
+const baseURL = process.env.CHLADNI_BASE_URL ?? 'http://127.0.0.1:5173';
 const browser = await chromium.launch({
   executablePath,
   args: [
@@ -24,7 +25,7 @@ page.on('console', (m) => {
   if (m.type() === 'error') errors.push(m.text());
 });
 const report = {
-  date: '2026-11-17',
+  date: '2026-11-24',
   browser: browser.version(),
   backendRequested: mode,
   platform: process.platform,
@@ -37,10 +38,11 @@ const report = {
     '3500 ms continuous GPU-interpolated playback after 18 warmup frames; 1200x700 CSS viewport; DPR 1.5 standard / 1 low; adaptive display disabled for comparable measurements',
   results: [],
   uiResults: [],
+  contactResults: [],
   errors,
 };
 try {
-  await page.goto('http://127.0.0.1:5173/benchmarks/index.html');
+  await page.goto(`${baseURL}/benchmarks/index.html`);
   await page.waitForFunction(() => typeof window.chladniBenchmark === 'function');
   for (const n of [5000, 20000, 50000, 100000]) {
     const result = await page.evaluate((n) => window.chladniBenchmark(n), n);
@@ -59,7 +61,12 @@ try {
     console.log(JSON.stringify({ count: n, ...result, macro }));
   }
   // Separate full-application sampling: includes React, Glass chrome and result analysis.
-  await page.goto('http://127.0.0.1:5173/');
+  for (const n of [100, 500]) {
+    const result = await page.evaluate((n) => window.chladniContactBenchmark(n), n);
+    report.contactResults.push(result);
+    console.log(JSON.stringify({ contact: result }));
+  }
+  await page.goto(`${baseURL}/`);
   await page.waitForFunction(() => document.querySelector('canvas')?.dataset.environment === 'hdr');
   await page.getByRole('button', { name: '스윕 계산', exact: true }).click();
   await page.waitForFunction(
@@ -109,7 +116,10 @@ try {
     report.uiResults.push({ workspace, ...sample });
     console.log(JSON.stringify({ workspace, ...sample }));
   }
-  await writeFile(`artifacts/v04-performance-${mode}.json`, JSON.stringify(report, null, 2) + '\n');
+  await writeFile(
+    `artifacts/laboratory-performance-${mode}.json`,
+    JSON.stringify(report, null, 2) + '\n',
+  );
 } finally {
   await browser.close();
 }

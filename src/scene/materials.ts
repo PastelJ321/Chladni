@@ -81,6 +81,18 @@ export function createMaterials() {
   const copper = new T.MeshStandardMaterial({ color: '#b17c53', metalness: 0.9, roughness: 0.3 });
   const ceramic = new T.MeshStandardMaterial({ color: '#55575a', metalness: 0.1, roughness: 0.68 });
   const sand = new T.MeshStandardMaterial({ color: '#cfb681', roughness: 0.92 });
+  const foam = new T.MeshStandardMaterial({
+    color: '#adb5a7',
+    roughness: 0.98,
+    bumpMap: fiber,
+    bumpScale: 0.009,
+  });
+  const tape = new T.MeshStandardMaterial({
+    color: '#9a8c66',
+    roughness: 0.47,
+    bumpMap: fiber,
+    bumpScale: 0.001,
+  });
   return {
     aluminum,
     steel,
@@ -94,5 +106,7 @@ export function createMaterials() {
     brush,
     roughness,
     fiber,
+    foam,
+    tape,
   };
 }

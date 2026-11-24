@@ -13,6 +13,16 @@ import type { Config, Field, ModalResult, Run, ViewSettings } from '../experimen
 import { initialParticles, framePair } from '../simulation/particles';
 import { isolines } from './layers';
 import { sampleGrid } from '../solver/response';
+import { pendingParticles } from '../particles/presets';
+import type { LoadedDeviceAsset } from '../scene/deviceAsset';
+function hierarchyDepth(node: T.Object3D) {
+  let n = 0;
+  while (node.parent) {
+    n++;
+    node = node.parent;
+  }
+  return n;
+}
 export interface RenderData {
   config: Config;
   field: Field | null;
@@ -27,6 +37,9 @@ export interface RenderData {
   director?: AnimationDirector;
   currentTime?: () => number;
   focusRegion?: [number, number, number, number];
+  asset?: LoadedDeviceAsset | null;
+  assetVisible?: boolean;
+  exposure?: number;
 }
 export class LabRenderer {
   renderer: T.WebGLRenderer;
@@ -34,6 +47,15 @@ export class LabRenderer {
   rig: CameraRig;
   materials = createMaterials();
   instrument = createInstrument(this.materials);
+  instruments = new Map<string, ReturnType<typeof createInstrument>>();
+  asset: LoadedDeviceAsset | null = null;
+  assetRest = new Map<T.Object3D, T.Matrix4>();
+  assetMaterials = new Map<
+    T.Material,
+    { opacity: number; transparent: boolean; depthWrite: boolean; emissive?: T.Color }
+  >();
+  plateY = PLATE_Y;
+  sectionDisplay = 0;
   overlay = new T.Group();
   fieldGPU = new PlateField();
   cloud = new ParticleRenderer(this.fieldGPU);
@@ -51,6 +73,7 @@ export class LabRenderer {
   last = performance.now();
   disposed = false;
   environmentReady = false;
+  sized = false;
   ray = new T.Raycaster();
   down = [0, 0];
   lastCamera = 'hero';
@@ -75,7 +98,7 @@ export class LabRenderer {
       powerPreference: 'high-performance',
     });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
-    this.renderer.setClearColor('#252a30');
+    this.renderer.setClearColor('#081f30');
     this.renderer.outputColorSpace = T.SRGBColorSpace;
     this.renderer.toneMapping = T.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
@@ -86,12 +109,20 @@ export class LabRenderer {
     this.renderer.domElement.setAttribute('aria-label', '실험 장비 3D 장면');
     this.renderer.domElement.setAttribute('role', 'img');
     this.rig = new CameraRig(this.renderer.domElement);
+    this.rig.plateY =
+      data.config.device?.connector.length.value != null
+        ? 1.302 + data.config.device.connector.length.value * 12
+        : PLATE_Y;
+    this.rig.plateScale = Math.max(data.config.plate.width, data.config.plate.height) / 0.3;
+    this.rig.elevated = ['exploded', 'assembly'].includes(data.view.structure);
+    this.lastCamera = data.view.camera;
+    this.lastStructure = data.view.structure;
     this.rig.onManual = () => {
       this.data.director?.interrupt();
       this.dirty = true;
     };
-    this.scene.background = new T.Color('#252a30');
-    this.scene.fog = new T.Fog('#252a30', 16, 40);
+    this.scene.background = new T.Color('#081f30');
+    this.scene.fog = new T.Fog('#081f30', 18, 45);
     const pm = new T.PMREMGenerator(this.renderer),
       room = new T.Scene();
     room.background = new T.Color('#2c3034');
@@ -135,7 +166,7 @@ export class LabRenderer {
         this.env.dispose();
         this.env = next;
         this.scene.environment = next.texture;
-        this.scene.environmentIntensity = 0.72;
+        this.scene.environmentIntensity = 0.62;
         this.scene.environmentRotation.y = 0.65;
         this.environmentReady = true;
         this.dirty = true;
@@ -153,11 +184,15 @@ export class LabRenderer {
         softbox.position.set(-3, 5, 3);
         softbox.lookAt(0, 1.5, 0);
         this.scene.add(softbox);
+        const edge = new T.RectAreaLight('#c2dce8', 3.2, 2, 5);
+        edge.position.set(4, 4, -4);
+        edge.lookAt(0, 1.8, 0);
+        this.scene.add(edge);
         this.dirty = true;
       },
     );
 
-    this.scene.add(new T.HemisphereLight('#e5ebf1', '#34302c', 0.55));
+    this.scene.add(new T.HemisphereLight('#c5e5f2', '#27312d', 0.42));
     const key = new T.DirectionalLight('#fff4e5', 2.1);
     key.position.set(-3, 8, 3);
     key.castShadow = true;
@@ -168,12 +203,12 @@ export class LabRenderer {
     key.shadow.radius = 4;
     key.shadow.blurSamples = 6;
     this.scene.add(key);
-    const fill = new T.DirectionalLight('#d4e1ed', 1.8);
+    const fill = new T.DirectionalLight('#b7d9e8', 1.5);
     fill.position.set(5, 4, -4);
     this.scene.add(fill);
     const bench = new T.Mesh(
       new T.BoxGeometry(12, 0.22, 8),
-      new T.MeshStandardMaterial({ color: '#1c2126', roughness: 0.8, metalness: 0.12 }),
+      new T.MeshStandardMaterial({ color: '#0c2430', roughness: 0.8, metalness: 0.12 }),
     );
     bench.position.set(0, -0.14, 0);
     bench.receiveShadow = true;
@@ -186,13 +221,14 @@ export class LabRenderer {
       }
     const floor = new T.Mesh(
       new T.PlaneGeometry(100, 100),
-      new T.MeshStandardMaterial({ color: '#24282d', roughness: 1 }),
+      new T.MeshStandardMaterial({ color: '#071a29', roughness: 1 }),
     );
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -2.2;
     floor.receiveShadow = true;
     this.scene.add(floor);
     this.scene.add(this.instrument.root, this.overlay);
+    this.instruments.set('bolted', this.instrument);
     this.scene.add(this.cloud.root, this.compareCloud.root);
     this.fieldGPU.attach(this.instrument.plate.material as T.Material);
     const depth = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking });
@@ -206,7 +242,19 @@ export class LabRenderer {
     this.loop();
   }
   update(data: RenderData) {
-    if (data.view.camera !== this.lastCamera || data.view.structure !== this.lastStructure) {
+    const plateY =
+      data.config.device?.connector.length.value != null
+        ? 1.302 + data.config.device.connector.length.value * 12
+        : PLATE_Y;
+    const plateScale = Math.max(data.config.plate.width, data.config.plate.height) / 0.3;
+    const geometryChanged = this.rig.plateY !== plateY || this.rig.plateScale !== plateScale;
+    this.rig.plateY = plateY;
+    this.rig.plateScale = plateScale;
+    if (
+      geometryChanged ||
+      data.view.camera !== this.lastCamera ||
+      data.view.structure !== this.lastStructure
+    ) {
       this.rig.elevated = ['exploded', 'assembly'].includes(data.view.structure);
       this.rig.preset(data.view.camera);
       this.lastCamera = data.view.camera;
@@ -219,7 +267,10 @@ export class LabRenderer {
     this.renderer.setSize(this.host.clientWidth, this.host.clientHeight, false);
     this.rig.camera.aspect = this.host.clientWidth / Math.max(1, this.host.clientHeight);
     this.rig.camera.updateProjectionMatrix();
-    this.rig.preset(this.data.view.camera, true);
+    if (!this.sized) {
+      this.rig.preset(this.data.view.camera, true);
+      this.sized = true;
+    }
     this.dirty = true;
   }
   pointerDown = (e: PointerEvent) => {
@@ -237,7 +288,7 @@ export class LabRenderer {
     );
     if (this.data.paint) {
       const point = this.ray.ray.intersectPlane(
-        new T.Plane(new T.Vector3(0, 1, 0), -PLATE_Y),
+        new T.Plane(new T.Vector3(0, 1, 0), -this.plateY),
         new T.Vector3(),
       );
       if (point) {
@@ -247,8 +298,11 @@ export class LabRenderer {
       }
       return;
     }
-    const hits = this.ray.intersectObjects(this.instrument.root.children, true);
-    this.select(hits[0]?.object.userData.part ?? null);
+    const root = this.asset?.root.visible ? this.asset.root : this.instrument.root;
+    const hits = this.ray.intersectObjects(root.children, true);
+    let selected: T.Object3D | null = hits[0]?.object ?? null;
+    while (selected && !selected.userData.part) selected = selected.parent;
+    this.select(selected?.userData.part ?? null);
   };
   clearOverlay() {
     for (const o of [...this.overlay.children]) {
@@ -271,12 +325,150 @@ export class LabRenderer {
     line.renderOrder = 4;
     this.overlay.add(line);
   }
+  selectInstrument(construction: 'adhesive' | 'bolted') {
+    let next = this.instruments.get(construction);
+    if (!next) {
+      next = createInstrument(this.materials, construction);
+      this.instruments.set(construction, next);
+      this.scene.add(next.root);
+      this.fieldGPU.attach(next.plate.material as T.Material);
+      const depth = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking });
+      this.fieldGPU.attach(depth, true);
+      next.plate.customDepthMaterial = depth;
+    }
+    for (const ins of this.instruments.values()) ins.root.visible = ins === next;
+    this.instrument = next;
+  }
+  setAsset(asset: LoadedDeviceAsset | null) {
+    if (this.asset === asset) return;
+    if (this.asset) this.scene.remove(this.asset.root);
+    for (const [m, o] of this.assetMaterials) {
+      m.opacity = o.opacity;
+      m.transparent = o.transparent;
+      m.depthWrite = o.depthWrite;
+      m.clippingPlanes = [];
+      if (m instanceof T.MeshStandardMaterial && o.emissive) m.emissive.copy(o.emissive);
+      m.needsUpdate = true;
+    }
+    this.assetRest.clear();
+    this.assetMaterials.clear();
+    this.asset = asset;
+    if (asset) {
+      asset.restTransforms ??= new Map(
+        [asset.root, ...Object.values(asset.parts)].map((node) => [
+          node,
+          {
+            position: node.position.clone(),
+            quaternion: node.quaternion.clone(),
+            scale: node.scale.clone(),
+          },
+        ]),
+      );
+      for (const [node, rest] of asset.restTransforms) {
+        node.position.copy(rest.position);
+        node.quaternion.copy(rest.quaternion);
+        node.scale.copy(rest.scale);
+      }
+      asset.root.scale.setScalar(asset.manifest.metersPerUnit * 12);
+      asset.root.position.set(0, 0, 0);
+      asset.root.updateMatrixWorld(true);
+      const box = new T.Box3().setFromObject(asset.parts.plate),
+        centre = box.getCenter(new T.Vector3());
+      asset.root.position.set(-centre.x, PLATE_Y - centre.y, -centre.z);
+      this.scene.add(asset.root);
+      asset.root.updateMatrixWorld(true);
+      // Assign parent tags first, then let explicitly mapped child parts override them.
+      for (const [id, node] of Object.entries(asset.parts).sort(
+        (a, b) => hierarchyDepth(a[1]) - hierarchyDepth(b[1]),
+      )) {
+        this.assetRest.set(node, node.matrixWorld.clone());
+        node.traverse((o) => {
+          if (o instanceof T.Mesh) {
+            o.userData.part = id;
+            o.castShadow = true;
+            o.receiveShadow = true;
+            for (const m of Array.isArray(o.material) ? o.material : [o.material])
+              if (!this.assetMaterials.has(m))
+                this.assetMaterials.set(m, {
+                  opacity: m.opacity,
+                  transparent: m.transparent,
+                  depthWrite: m.depthWrite,
+                  ...(m instanceof T.MeshStandardMaterial ? { emissive: m.emissive.clone() } : {}),
+                });
+          }
+        });
+      }
+    }
+  }
+  prepareAsset(
+    poses: Record<
+      string,
+      { offset: [number, number, number]; rotation: [number, number, number] }
+    > | null,
+    v: ViewSettings,
+    plane: T.Plane,
+  ) {
+    if (!this.asset) return;
+    for (const [id, node] of Object.entries(this.asset.parts).sort(
+      (a, b) => hierarchyDepth(a[1]) - hierarchyDepth(b[1]),
+    )) {
+      const rest = this.assetRest.get(node);
+      if (!rest) continue;
+      const pos = new T.Vector3(),
+        q = new T.Quaternion(),
+        scale = new T.Vector3();
+      rest.decompose(pos, q, scale);
+      const pose = poses?.[id];
+      if (pose) {
+        pos.add(new T.Vector3(...pose.offset));
+        q.multiply(new T.Quaternion().setFromEuler(new T.Euler(...pose.rotation)));
+      }
+      const matrix = new T.Matrix4().compose(pos, q, scale);
+      if (node.parent) {
+        node.parent.updateWorldMatrix(true, false);
+        matrix.premultiply(node.parent.matrixWorld.clone().invert());
+      }
+      matrix.decompose(node.position, node.quaternion, node.scale);
+      node.updateMatrixWorld(true);
+    }
+    this.asset.root.traverse((o) => {
+      if (!(o instanceof T.Mesh)) return;
+      const id = String(o.userData.part ?? ''),
+        clip =
+          v.structure === 'section' ||
+          (v.structure === 'cutaway' &&
+            ['speaker', 'frame', 'cone', 'surround', 'magnet'].includes(id)),
+        ghost =
+          v.structure === 'ghost' && ['speaker', 'frame', 'cone', 'surround', 'plate'].includes(id);
+      o.castShadow = !ghost;
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        const original = this.assetMaterials.get(m);
+        if (!original) continue;
+        if (!!m.clippingPlanes?.length !== clip) m.needsUpdate = true;
+        m.clippingPlanes = clip ? [plane] : [];
+        if (m.transparent !== (ghost || original.transparent)) m.needsUpdate = true;
+        m.transparent = ghost || original.transparent;
+        m.opacity = ghost ? 0.2 : original.opacity;
+        m.depthWrite = ghost ? false : original.depthWrite;
+        if (m instanceof T.MeshStandardMaterial && original.emissive)
+          m.emissive
+            .copy(original.emissive)
+            .add(new T.Color(v.selected === id ? '#174959' : '#000000'));
+      }
+    });
+  }
   prepare(
     d: Omit<RenderData, 'compare'>,
     phase: number,
     slot = 0,
     particleRatio = this.renderer.getPixelRatio(),
   ) {
+    const construction = d.config.device?.construction ?? 'bolted';
+    this.selectInstrument(construction);
+    this.setAsset(d.asset ?? null);
+    const assetVisible = !!this.asset && !!d.assetVisible;
+    this.instrument.root.visible = !assetVisible;
+    if (this.asset) this.asset.root.visible = assetVisible;
     const cloud = slot === 0 ? this.cloud : this.compareCloud;
     this.cloud.root.visible = slot === 0 && d.view.particles;
     this.compareCloud.root.visible = slot === 1 && d.view.particles;
@@ -285,7 +477,7 @@ export class LabRenderer {
       ins = this.instrument,
       scaleX = p.width / 0.3,
       scaleZ = p.height / 0.3;
-    const key = JSON.stringify(c.grains);
+    const key = JSON.stringify([c.grains, p.width, p.height]);
     if (key !== this.lastConfig) {
       this.seeds = initialParticles(c);
       this.lastConfig = key;
@@ -293,14 +485,20 @@ export class LabRenderer {
     const progress =
       v.structure === 'exploded' ? v.explosion : v.structure === 'assembly' ? 1 - v.assembly : 0;
     const poses = this.film?.parts ?? explodedParts(progress);
+    this.plateY =
+      c.device?.connector.length.value != null
+        ? 1.29 + c.device.connector.length.value * 12 + 0.012
+        : PLATE_Y;
+    const elevation = this.plateY - PLATE_Y;
     const plane = new T.Plane(
       v.sectionAxis === 'x'
         ? new T.Vector3(-1, 0, 0)
         : v.sectionAxis === 'y'
           ? new T.Vector3(0, -1, 0)
           : new T.Vector3(0, 0, -1),
-      v.sectionPosition + (v.sectionAxis === 'y' ? PLATE_Y : 0),
+      this.sectionDisplay + (v.sectionAxis === 'y' ? this.plateY : 0),
     );
+    if (assetVisible) this.prepareAsset(poses, v, plane);
     for (const [id, part] of Object.entries(ins.parts)) {
       const pose = poses[id];
       part.position.fromArray(pose?.offset ?? [0, 0, 0]);
@@ -317,11 +515,21 @@ export class LabRenderer {
           'surround',
           'particles',
         ].includes(id) || p.boundary === 'center';
+      part.scale.set(1, 1, 1);
+      if (['plate', 'bolt', 'washerTop', 'washerBottom'].includes(id)) part.position.y += elevation;
+      if (construction === 'adhesive' && ['bolt', 'washerTop', 'washerBottom'].includes(id))
+        part.visible = false;
       if (['bolt', 'washerTop', 'washerBottom', 'coupler'].includes(id)) {
         if (c.drive.kind === 'base')
           part.position.y += c.drive.displacement * Math.cos(phase) * v.gain * 12;
-        part.position.x += (Math.round(p.supportX * p.mesh) / p.mesh - 0.5) * p.width * 12;
-        part.position.z += (Math.round(p.supportY * p.mesh) / p.mesh - 0.5) * p.height * 12;
+        part.position.x +=
+          ((p.connection?.enabled ? p.supportX : Math.round(p.supportX * p.mesh) / p.mesh) - 0.5) *
+          p.width *
+          12;
+        part.position.z +=
+          ((p.connection?.enabled ? p.supportY : Math.round(p.supportY * p.mesh) / p.mesh) - 0.5) *
+          p.height *
+          12;
       }
       part.traverse((o) => {
         if (!(o instanceof T.Mesh)) return;
@@ -341,10 +549,24 @@ export class LabRenderer {
           m.needsUpdate = true;
         }
         m.opacity = ghost ? 0.18 : 1;
+        o.castShadow = !ghost;
         m.depthWrite = !ghost;
         m.emissive.set(v.selected === id ? '#57798b' : '#000000');
         m.emissiveIntensity = 0.2;
       });
+    }
+    if (construction === 'adhesive') {
+      const group = ins.parts.coupler,
+        scale =
+          c.device?.connector.length.value != null
+            ? (c.device.connector.length.value * 12) / (PLATE_Y - 1.302)
+            : 1;
+      group.scale.y = scale;
+      group.position.y += 1.29 * (1 - scale);
+      group.scale.x =
+        c.device?.connector.width.value != null ? (c.device.connector.width.value * 12) / 0.31 : 1;
+      group.scale.z =
+        c.device?.connector.depth.value != null ? (c.device.connector.depth.value * 12) / 0.31 : 1;
     }
     // Plate topology/normals stay immutable during playback; deformation and data colors are GPU sampled.
     ins.plate.scale.set(scaleX, 1, scaleZ);
@@ -362,9 +584,13 @@ export class LabRenderer {
       const frame = d.run ? framePair(d.run, d.time).a : null;
       this.fieldGPU.updateDensity(frame?.positions ?? this.seeds.positions, frame ?? this.seeds);
     }
-    cloud.root.visible = v.particles && !v.showMode;
+    cloud.root.visible = v.particles && !v.showMode && !assetVisible && !pendingParticles(c.grains);
     cloud.setClipping(v.structure === 'section' ? plane : null);
-    cloud.root.position.set(0, PLATE_Y + p.thickness * 6 + (poses.particles?.offset[1] ?? 0), 0);
+    cloud.root.position.set(
+      0,
+      this.plateY + p.thickness * 6 + (poses.particles?.offset[1] ?? 0),
+      0,
+    );
     cloud.update(
       c,
       d.run,
@@ -391,7 +617,7 @@ export class LabRenderer {
     this.overlayKey = overlayKey;
     this.overlayField = f;
     this.clearOverlay();
-    const y = PLATE_Y + p.thickness * 6 + 0.005 + (poses.plate?.offset[1] ?? 0);
+    const y = this.plateY + p.thickness * 6 + 0.005 + (poses.plate?.offset[1] ?? 0);
     if (v.layer === 'mesh') {
       const vertices: number[] = [];
       for (let i = 0; i <= p.mesh; i++) {
@@ -427,7 +653,7 @@ export class LabRenderer {
             y,
             (segments[i + 1] - 0.5) * p.height * 12,
           );
-        this.lines(vertices, level === 0 ? '#ebd7a7' : '#8fb3c9');
+        this.lines(vertices, level === 0 ? '#9b6129' : '#245a72', 0.95);
       }
     }
     if (f && v.layer === 'vector') {
@@ -528,7 +754,12 @@ export class LabRenderer {
     const now = performance.now(),
       dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
-    if (document.hidden) return;
+    if (document.hidden || this.renderer.getContext().isContextLost()) return;
+    const sectionGoal = this.data.view.sectionPosition;
+    const oldSection = this.sectionDisplay;
+    this.sectionDisplay += (sectionGoal - this.sectionDisplay) * (1 - Math.exp(-10 * dt));
+    if (Math.abs(sectionGoal - this.sectionDisplay) < 0.0001) this.sectionDisplay = sectionGoal;
+    if (oldSection !== this.sectionDisplay) this.dirty = true;
     const director = this.data.director;
     this.film = director?.sample() ?? null;
     const filmChanged = director && director.revision !== this.filmRevision;
@@ -540,6 +771,7 @@ export class LabRenderer {
     this.draw();
   };
   draw(width = this.host.clientWidth, height = this.host.clientHeight, captureMode = false) {
+    this.renderer.toneMappingExposure = this.data.exposure ?? 0.95;
     const low = this.data.view.quality === 'low' || (this.adaptiveQuality && this.quality.degraded);
     this.activeQuality = low ? 'low' : 'standard';
     const ratio = captureMode ? 1 : low ? 1 : Math.min(devicePixelRatio, 1.5);
@@ -671,6 +903,7 @@ export class LabRenderer {
     this.compareCloud.dispose();
     const geometries = new Set<T.BufferGeometry>(),
       materials = new Set<T.Material>();
+    this.setAsset(null);
     this.scene.traverse((o) => {
       if (o instanceof T.DirectionalLight) o.shadow.dispose();
       if (o instanceof T.Mesh || o instanceof T.Line) {
@@ -684,7 +917,7 @@ export class LabRenderer {
     geometries.forEach((g) => g.dispose());
     materials.forEach((m) => m.dispose());
     this.fieldGPU.dispose();
-    this.instrument.plate.customDepthMaterial?.dispose();
+    for (const ins of this.instruments.values()) ins.plate.customDepthMaterial?.dispose();
     this.materials.brush.dispose();
     this.materials.roughness.dispose();
     this.materials.fiber.dispose();

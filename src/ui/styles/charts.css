@@ -3,17 +3,17 @@
   align-items: center;
   gap: 12px;
   padding: 13px 0;
-  border-bottom: 1px solid #d3dade;
+  border-bottom: 1px solid #2a5065;
 }
 .simulation-controls button {
   border: 0;
   padding: 7px;
   background: transparent;
-  font-size: 11px;
+  font-size: 12px;
 }
 .simulation-controls .play-control {
-  background: #416783;
-  color: #fff;
+  background: #194759;
+  color: #ffffff;
   border-radius: 6px;
   width: 32px;
   height: 32px;
@@ -21,11 +21,11 @@
 .simulation-controls .time-value {
   font-variant-numeric: tabular-nums;
   font-size: 13px;
-  color: #3b505f;
+  color: #aac7d3;
   white-space: nowrap;
 }
 .time-value small {
-  font-size: 10px;
+  font-size: 12px;
   color: #8a969e;
 }
 .simulation-controls > input {
@@ -34,20 +34,20 @@
 .simulation-controls select {
   border: 0;
   background: none;
-  font-size: 11px;
+  font-size: 12px;
   padding: 4px;
 }
 .simulation-controls button.active {
-  background: #d8e4eb;
-  color: #3f647c;
+  background: #0c283b;
+  color: #aac7d3;
 }
 .analysis-toolbar {
   display: flex;
   gap: 18px;
   align-items: center;
   padding: 13px 0;
-  font-size: 10px;
-  color: #71818c;
+  font-size: 12px;
+  color: #aac7d3;
   flex-wrap: wrap;
 }
 .analysis-toolbar label {
@@ -62,18 +62,18 @@
   padding: 4px 0;
   border: 0;
   background: none;
-  font-size: 10px;
+  font-size: 12px;
 }
 .analysis-toolbar select {
   background: none;
   border: 0;
   padding: 3px;
-  font-size: 10px;
+  font-size: 12px;
   margin-left: auto;
 }
 .response-panel {
-  background: #fbfcfb;
-  border: 1px solid #d9dfe3;
+  background: #0c283b;
+  border: 1px solid #2a5065;
   border-radius: 8px;
   margin: 0 0 18px;
   padding: 16px 18px 13px;
@@ -85,27 +85,27 @@
 }
 .chart-header h3 {
   font-size: 12px;
-  color: #445664;
+  color: #aac7d3;
   margin-bottom: 5px;
 }
 .chart-header > div > span {
-  font-size: 10px;
+  font-size: 12px;
   color: #95a0a8;
 }
 .source-tag {
   display: inline-block;
-  color: #5d7b8e;
-  background: #e9f0f4;
-  border: 1px solid #d8e3ea;
+  color: #aac7d3;
+  background: #0c283b;
+  border: 1px solid #2a5065;
   border-radius: 4px;
   padding: 3px 5px;
-  font-size: 9px;
+  font-size: 12px;
   white-space: nowrap;
 }
 .source-tag.warm {
-  color: #91714e;
-  background: #f4efe6;
-  border-color: #e8dfd1;
+  color: #aac7d3;
+  background: #0c283b;
+  border-color: #2a5065;
 }
 .response-chart {
   display: block;
@@ -115,7 +115,7 @@
   cursor: crosshair;
 }
 .response-chart text {
-  font-size: 9px;
+  font-size: 12px;
   fill: #8a979f;
   font-family: Plex, sans-serif;
 }
@@ -126,16 +126,16 @@
   flex-wrap: wrap;
   margin-top: 6px;
   min-height: 25px;
-  font-size: 10px;
+  font-size: 12px;
   color: #8b989f;
 }
 .peak-list > span:first-child {
   margin-right: 4px;
 }
 .peak-list button {
-  font-size: 10px;
+  font-size: 12px;
   padding: 4px 7px;
-  background: #edf2f4;
-  border-color: #dce5ea;
-  color: #53738a;
+  background: #0c283b;
+  border-color: #2a5065;
+  color: #aac7d3;
 }

@@ -18,6 +18,7 @@ self.onmessage = (
       for (const f of result.run.frames) {
         if (f.positions instanceof Float32Array) transfer.push(f.positions.buffer);
         if (f.distance instanceof Float32Array) transfer.push(f.distance.buffer);
+        if (f.heights instanceof Float32Array) transfer.push(f.heights.buffer);
       }
     self.postMessage({ id, ...result }, { transfer });
   } catch (e) {

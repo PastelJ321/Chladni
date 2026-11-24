@@ -7,10 +7,12 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node --import tsx --test tests/physics.test.ts tests/research.test.ts tests/focused.test.ts tests/overhaul.test.ts",
+    "test": "node --import tsx --test tests/physics.test.ts tests/research.test.ts tests/focused.test.ts tests/overhaul.test.ts tests/connector.test.ts tests/contact.test.ts tests/device.test.ts tests/analysis.test.ts tests/laboratory.test.ts",
     "test:browser": "playwright test",
     "format": "prettier --write src tests *.ts *.json index.html docs README.md",
-    "benchmark": "node scripts/benchmark.mjs"
+    "benchmark": "node scripts/benchmark.mjs",
+    "test:stability": "node scripts/stability.mjs",
+    "test:firefox": "node --import tsx scripts/firefox-smoke.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

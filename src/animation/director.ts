@@ -11,6 +11,10 @@ export interface PartPose {
   offset: Vec3;
   rotation: Vec3;
 }
+export interface InstrumentFraming {
+  plateY: number;
+  scale: number;
+}
 export interface DirectorFrame {
   camera: CameraPose | null;
   parts: Record<string, PartPose> | null;
@@ -74,6 +78,7 @@ function track(
   t: number,
   points: { t: number; position: Vec3; target: Vec3; fov: number }[],
   origin: CameraPose,
+  framing: InstrumentFraming,
 ): CameraPose {
   const frames = [
     {
@@ -82,7 +87,20 @@ function track(
       target: origin.target as Vec3,
       fov: origin.fov ?? 32,
     },
-    ...points,
+    ...points.map((frame) => {
+      const target: Vec3 = [
+        frame.target[0] * framing.scale,
+        frame.target[1] + framing.plateY - 2.24,
+        frame.target[2] * framing.scale,
+      ];
+      const macro = Math.hypot(...frame.position.map((v, i) => v - frame.target[i])) < 2;
+      const fit = macro ? 1 : Math.max(1, framing.scale);
+      return {
+        ...frame,
+        target,
+        position: target.map((v, i) => v + (frame.position[i] - frame.target[i]) * fit) as Vec3,
+      };
+    }),
   ];
   for (let i = 1; i < frames.length; i++)
     if (t <= frames[i].t) {
@@ -109,6 +127,7 @@ export class AnimationDirector {
   origin: CameraPose = { position: [5.2, 5, 6.9], target: [0, 1.4, 0], fov: 32 };
   reason = '';
   revision = 0;
+  framing: InstrumentFraming = { plateY: 2.24, scale: 1 };
   get duration() {
     return SEQUENCES.find((s) => s.id === this.id)?.duration ?? 0;
   }
@@ -183,6 +202,7 @@ export class AnimationDirector {
             { t: 8, position: [4.6, 4.7, 6], target: [0, 1.55, 0], fov: 31 },
           ],
           this.origin,
+          this.framing,
         );
         break;
       case 'exploded': {
@@ -196,6 +216,7 @@ export class AnimationDirector {
             { t: 18, position: [5, 4.8, 6.5], target: [0, 1.5, 0], fov: 32 },
           ],
           this.origin,
+          this.framing,
         );
         break;
       }
@@ -207,6 +228,7 @@ export class AnimationDirector {
             { t: 9, position: [0.02, 11.4, 0.12], target: [0, 2.24, 0], fov: 31 },
           ],
           this.origin,
+          this.framing,
         );
         layer = p < 0.28 ? 'material' : p < 0.7 ? 'amplitude' : 'contour';
         gain = 1200 * smooth(p / 0.35);
@@ -215,10 +237,11 @@ export class AnimationDirector {
         camera = track(
           t,
           [
-            { t: 6, position: [0.68, 2.48, 0.92], target: [0.55, 2.252, 0.55], fov: 32 },
-            { t: 9, position: [0.65, 2.46, 0.89], target: [0.55, 2.252, 0.55], fov: 32 },
+            { t: 6, position: [0.94, 2.89, 1.53], target: [0.55, 2.252, 0.55], fov: 32 },
+            { t: 9, position: [0.88, 2.84, 1.46], target: [0.55, 2.252, 0.55], fov: 32 },
           ],
           this.origin,
+          this.framing,
         );
         gain = 1;
         break;
@@ -227,9 +250,10 @@ export class AnimationDirector {
           t,
           [
             { t: 3, position: [0.05, 9.4, 0.09], target: [0, 2.24, 0], fov: 31 },
-            { t: 11, position: [0.68, 2.48, 0.92], target: [0.55, 2.252, 0.55], fov: 32 },
+            { t: 11, position: [0.94, 2.89, 1.53], target: [0.55, 2.252, 0.55], fov: 32 },
           ],
           this.origin,
+          this.framing,
         );
         runProgress = smooth(Math.min(1, p / 0.82));
         layer = p > 0.5 && p < 0.72 ? 'trace' : 'material';
@@ -241,6 +265,7 @@ export class AnimationDirector {
           t,
           [{ t: 3, position: [0.04, 10, 0.08], target: [0, 2.24, 0], fov: 31 }],
           this.origin,
+          this.framing,
         );
         runProgress = p;
         break;

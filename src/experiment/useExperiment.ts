@@ -102,7 +102,11 @@ export function useExperiment() {
       return;
     }
     const prev = current.current;
-    if (configKey(prev) === configKey(next)) return;
+    if (configKey(prev) === configKey(next)) {
+      current.current = cloneConfig(next);
+      setConfig(current.current);
+      return;
+    }
     stopJob();
     setPlaying(false);
     setError('');
@@ -186,7 +190,7 @@ export function useExperiment() {
         }
       : null;
   }
-  function saveRecord() {
+  function saveRecord(extra: Pick<RecordEntry, 'notes' | 'observations' | 'calibration'> = {}) {
     const r = snapshot();
     if (!r) return;
     if (records.length >= 20) {
@@ -195,7 +199,12 @@ export function useExperiment() {
     }
     setRecords((a) => [
       ...a,
-      { ...r, id: crypto.randomUUID(), name: `실험 ${String(a.length + 1).padStart(2, '0')}` },
+      {
+        ...r,
+        ...extra,
+        id: crypto.randomUUID(),
+        name: `실험 ${String(a.length + 1).padStart(2, '0')}`,
+      },
     ]);
   }
   function loadRecord(r: RecordEntry) {
@@ -210,6 +219,22 @@ export function useExperiment() {
     clock.current.duration = r.config.drive.duration;
     setTime(0);
     setStatus('기록 불러옴');
+  }
+  function loadConditions(next: Config) {
+    validateConfig(next);
+    stopJob();
+    setPlaying(false);
+    current.current = cloneConfig(next);
+    setConfig(current.current);
+    setModal(null);
+    setField(null);
+    setSweep(null);
+    setRun(null);
+    setError('');
+    setProgress(0);
+    clock.current.duration = next.drive.duration;
+    setTime(0);
+    setStatus('조건 불러옴 · 스윕 필요');
   }
   function selectFrequency(f: number) {
     const n = cloneConfig(current.current);
@@ -249,6 +274,7 @@ export function useExperiment() {
     saveRecord,
     snapshot,
     loadRecord,
+    loadConditions,
     currentTime: () => clock.current.sample(),
     selectFrequency,
     clock: clock.current,

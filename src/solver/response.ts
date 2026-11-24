@@ -1,7 +1,9 @@
 import type { Config, Field, ModalResult, Sweep } from '../experiment/types';
 import { responseKey, sweepKey } from '../experiment/config';
 import { sampleMode } from './modal';
+import { compliantCoefficients } from './compliantResponse';
 export function coefficients(modal: ModalResult, c: Config, frequency: number) {
+  if (c.plate.connection?.enabled) return compliantCoefficients(modal, c, frequency);
   const w = 2 * Math.PI * frequency;
   return modal.frequencies.map((f, i) => {
     const wn = 2 * Math.PI * f,
@@ -27,7 +29,7 @@ export function responseField(
   let peak = 0;
   for (let y = 0; y < size; y++)
     for (let x = 0; x < size; x++) {
-      let re = c.drive.kind === 'base' ? c.drive.displacement : 0,
+      let re = c.drive.kind === 'base' && !c.plate.connection?.enabled ? c.drive.displacement : 0,
         im = 0;
       for (let i = 0; i < q.length; i++) {
         const shape = sampleMode(modal, i, x / (size - 1), y / (size - 1));

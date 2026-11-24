@@ -5,9 +5,12 @@ import type { createMaterials } from './materials';
 import { PART_SPECS, type InstrumentPartId } from './parts';
 export const PLATE_Y = 2.24,
   HALF_PLATE = 1.8;
-export function createInstrument(materials: ReturnType<typeof createMaterials>) {
+export function createInstrument(
+  materials: ReturnType<typeof createMaterials>,
+  construction: 'adhesive' | 'bolted' = 'bolted',
+) {
   const root = new T.Group();
-  root.name = 'chladni-concept';
+  root.name = `chladni-${construction}-schematic`;
   const parts = Object.fromEntries(
     PART_SPECS.map((p) => {
       const g = new T.Group();
@@ -174,58 +177,69 @@ export function createInstrument(materials: ReturnType<typeof createMaterials>) 
       6,
     );
   }
-  cylinder(0.23, 0.2, 0.12, materials.aluminum, 'coupler', 1.16);
-  cylinder(0.09, 0.16, 0.15, materials.aluminum, 'coupler', 1.295);
-  cylinder(0.036, 0.036, 0.82, materials.steel, 'coupler', 1.77);
-  annulus(0.035, 0.13, 0.046, materials.steel, 'coupler', 2.195);
-  for (let i = 0; i < 5; i++) ring(0.038, 0.002, materials.steel, 'coupler', 2.105 + i * 0.012);
-  const plateGeometry = createPlateGeometry();
+  if (construction === 'bolted') {
+    cylinder(0.23, 0.2, 0.12, materials.aluminum, 'coupler', 1.16);
+    cylinder(0.09, 0.16, 0.15, materials.aluminum, 'coupler', 1.295);
+    cylinder(0.036, 0.036, 0.82, materials.steel, 'coupler', 1.77);
+    annulus(0.035, 0.13, 0.046, materials.steel, 'coupler', 2.195);
+    for (let i = 0; i < 5; i++) ring(0.038, 0.002, materials.steel, 'coupler', 2.105 + i * 0.012);
+  } else {
+    box(0.31, 0.93, 0.31, materials.foam, 'coupler', 0, 1.74, 0, 0.018);
+    box(0.53, 0.045, 0.53, materials.tape, 'coupler', 0, PLATE_Y - 0.037, 0, 0.008);
+    for (const z of [-0.17, 0.17])
+      box(0.39, 0.018, 0.065, materials.tape, 'coupler', 0, 1.29, z, 0.005);
+    for (const x of [-0.163, 0.163])
+      box(0.018, 0.22, 0.2, materials.tape, 'coupler', x, 1.43, 0, 0.004);
+  }
+  const plateGeometry = createPlateGeometry(3.6, 3.6, 0.024, construction === 'bolted' ? 0.046 : 0);
   const plate = mesh(plateGeometry, materials.aluminum, 'plate', 0, PLATE_Y),
     restPositions = Float32Array.from(plateGeometry.attributes.position.array);
-  annulus(0.042, 0.13, 0.01, materials.steel, 'washerBottom', PLATE_Y - 0.017);
-  annulus(0.042, 0.13, 0.018, materials.steel, 'washerTop', PLATE_Y + 0.021);
-  cylinder(0.036, 0.036, 0.14, materials.steel, 'bolt', 2.203);
-  const headShape = new T.Shape(),
-    socket = new T.Path();
-  for (let i = 0; i <= 6; i++) {
-    const a = (i * Math.PI) / 3,
-      x = Math.cos(a) * 0.075,
-      y = Math.sin(a) * 0.075;
-    i ? headShape.lineTo(x, y) : headShape.moveTo(x, y);
+  if (construction === 'bolted') {
+    annulus(0.042, 0.13, 0.01, materials.steel, 'washerBottom', PLATE_Y - 0.017);
+    annulus(0.042, 0.13, 0.018, materials.steel, 'washerTop', PLATE_Y + 0.021);
+    cylinder(0.036, 0.036, 0.14, materials.steel, 'bolt', 2.203);
+    const headShape = new T.Shape(),
+      socket = new T.Path();
+    for (let i = 0; i <= 6; i++) {
+      const a = (i * Math.PI) / 3,
+        x = Math.cos(a) * 0.075,
+        y = Math.sin(a) * 0.075;
+      i ? headShape.lineTo(x, y) : headShape.moveTo(x, y);
+    }
+    for (let i = 0; i <= 6; i++) {
+      const a = (-i * Math.PI) / 3,
+        x = Math.cos(a) * 0.027,
+        y = Math.sin(a) * 0.027;
+      i ? socket.lineTo(x, y) : socket.moveTo(x, y);
+    }
+    headShape.holes.push(socket);
+    const head = mesh(
+      new T.ExtrudeGeometry(headShape, {
+        depth: 0.045,
+        steps: 1,
+        bevelEnabled: true,
+        bevelSize: 0.003,
+        bevelThickness: 0.005,
+        bevelSegments: 2,
+        curveSegments: 1,
+      }),
+      materials.steel,
+      'bolt',
+      0,
+      2.275,
+    );
+    head.rotation.x = -Math.PI / 2;
+    const thread = [];
+    for (let i = 0; i <= 240; i++) {
+      const a = (i / 240) * Math.PI * 20;
+      thread.push(new T.Vector3(0.038 * Math.cos(a), 2.14 + (i / 240) * 0.13, 0.038 * Math.sin(a)));
+    }
+    mesh(
+      new T.TubeGeometry(new T.CatmullRomCurve3(thread), 240, 0.004, 5, false),
+      materials.steel,
+      'bolt',
+    );
   }
-  for (let i = 0; i <= 6; i++) {
-    const a = (-i * Math.PI) / 3,
-      x = Math.cos(a) * 0.027,
-      y = Math.sin(a) * 0.027;
-    i ? socket.lineTo(x, y) : socket.moveTo(x, y);
-  }
-  headShape.holes.push(socket);
-  const head = mesh(
-    new T.ExtrudeGeometry(headShape, {
-      depth: 0.045,
-      steps: 1,
-      bevelEnabled: true,
-      bevelSize: 0.003,
-      bevelThickness: 0.005,
-      bevelSegments: 2,
-      curveSegments: 1,
-    }),
-    materials.steel,
-    'bolt',
-    0,
-    2.275,
-  );
-  head.rotation.x = -Math.PI / 2;
-  const thread = [];
-  for (let i = 0; i <= 240; i++) {
-    const a = (i / 240) * Math.PI * 20;
-    thread.push(new T.Vector3(0.038 * Math.cos(a), 2.14 + (i / 240) * 0.13, 0.038 * Math.sin(a)));
-  }
-  mesh(
-    new T.TubeGeometry(new T.CatmullRomCurve3(thread), 240, 0.004, 5, false),
-    materials.steel,
-    'bolt',
-  );
   for (const x of [-0.15, 0.15]) {
     box(0.075, 0.1, 0.08, materials.black, 'frame', x, 0.68, 0.52);
     cylinder(0.023, 0.023, 0.04, materials.copper, 'frame', 0.75, x, 0.52, 12);

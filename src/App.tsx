@@ -1,3 +1,17 @@
+import { DeviceProfilePanel } from './ui/DeviceProfilePanel';
+import { CalibrationPanel } from './ui/CalibrationPanel';
+import type { CalibrationReport } from './solver/calibration';
+import { DEFAULT_ANALYSIS, type AnalysisOptions } from './analysis/metrics';
+import type { ObservationSnapshot } from './analysis/observationTypes';
+import {
+  useOffline,
+  storeLocalSession,
+  readLocalSession,
+  type Bookmark,
+} from './presentation/session';
+import { disposeDeviceAsset, type LoadedDeviceAsset } from './scene/deviceAsset';
+import { pendingParticles } from './particles/presets';
+import type { RecordEntry } from './experiment/types';
 import { ParticleDisplay } from './ui/ParticleDisplay';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -62,13 +76,44 @@ export default function App() {
     [about, setAbout] = useState(false),
     [directorOpen, setDirectorOpen] = useState(false),
     [clean, setClean] = useState(false),
-    [region, setRegion] = useState('center');
+    [region, setRegion] = useState('center'),
+    [analysisOptions, setAnalysisOptions] = useState<AnalysisOptions>(DEFAULT_ANALYSIS),
+    [calibration, setCalibration] = useState<CalibrationReport | null>(null),
+    [bookmarks, setBookmarks] = useState<Bookmark[]>([]),
+    [asset, setAsset] = useState<LoadedDeviceAsset | null>(null),
+    [exposure, setExposure] = useState(0.95);
+  const offline = useOffline();
+  const assetRef = useRef<LoadedDeviceAsset | null>(null);
+  useEffect(
+    () => () => {
+      if (assetRef.current) disposeDeviceAsset(assetRef.current);
+    },
+    [],
+  );
+  function changeAsset(next: LoadedDeviceAsset | null) {
+    const old = assetRef.current;
+    assetRef.current = next;
+    setAsset(next);
+    api.current?.setAsset(null);
+    if (old) disposeDeviceAsset(old);
+  }
+
   const api = useRef<LabRenderer | null>(null),
     sessionInput = useRef<HTMLInputElement>(null),
     dialog = useRef<HTMLDialogElement>(null),
     configRef = useRef(e.config);
   configRef.current = e.config;
   const presentation = film.director.sample();
+  const assetRecord = e.config.device?.asset;
+  const activeAsset =
+    asset &&
+    assetRecord &&
+    (['name', 'size', 'lastModified', 'type'] as const).every(
+      (k) => assetRecord.file[k] === asset.reference[k],
+    ) &&
+    JSON.stringify(assetRecord.manifest) === JSON.stringify(asset.manifest)
+      ? asset
+      : null;
   const previewTime =
     presentation?.runProgress != null ? presentation.runProgress * e.config.drive.duration : e.time;
   const m = useObservations(previewTime, setToast);
@@ -161,7 +206,10 @@ export default function App() {
           : region === 'all'
             ? [0, 0, 1, 1]
             : [0.25, 0.25, 0.75, 0.75],
-    mediaPane: showingMedia && !m.overlay,
+    mediaPane: showingMedia,
+    asset: activeAsset,
+    assetVisible: space === 'device' && !!activeAsset,
+    exposure,
   };
   const data: RenderData =
     !showingMedia && comparison === 'before' && e.run
@@ -211,6 +259,13 @@ export default function App() {
     }
     const origin = api.current?.rig.pose();
     if (!origin) return;
+    film.director.framing = {
+      plateY:
+        e.config.device?.connector.length.value != null
+          ? 1.302 + e.config.device.connector.length.value * 12
+          : 2.24,
+      scale: Math.max(e.config.plate.width, e.config.plate.height) / 0.3,
+    };
     e.setPlaying(false);
     setPaint(false);
     setComparison('');
@@ -226,10 +281,141 @@ export default function App() {
     c.grains.spots = [...c.grains.spots, point].slice(-200);
     e.change(c);
   };
+  function extras() {
+    return { observations: m.snapshot(), analysis: analysisOptions, calibration, bookmarks, view };
+  }
+  function activeRecord() {
+    const r = e.snapshot();
+    return r
+      ? {
+          ...r,
+          observations: m.snapshot(),
+          ...(calibration ? { calibration } : {}),
+          notes: {
+            observation: m.note,
+            discrepancy: '',
+            reproducibility:
+              m.reproduced === 'yes'
+                ? ('reproduced' as const)
+                : m.reproduced === 'no'
+                  ? ('failed' as const)
+                  : ('unknown' as const),
+          },
+        }
+      : null;
+  }
+  function saveRecord() {
+    const r = activeRecord();
+    if (!r) return;
+    e.saveRecord({ observations: r.observations, calibration: r.calibration, notes: r.notes });
+    setToast('실험 조건·결과·관측을 기록했습니다.');
+  }
+  function restoreObservations(value?: ObservationSnapshot) {
+    m.restore(
+      value ?? {
+        schema: 'chladni-observation/1',
+        media: null,
+        corners: [],
+        corrected: false,
+        opacity: 0.65,
+        overlay: false,
+        sync: false,
+        offset: 0,
+        frameTime: 0,
+        frequency: '',
+        note: '',
+        reproduced: 'unknown',
+        measured: [],
+        responseName: '',
+        regions: [],
+      },
+    );
+  }
+  function loadRecord(r: RecordEntry) {
+    stopSequence();
+    e.loadRecord(r);
+    restoreObservations(r.observations);
+    setCalibration(r.calibration ?? null);
+    setToast('저장된 계산 결과를 불러왔습니다.');
+  }
+  async function enterPresentation() {
+    e.setPlaying(false);
+    film.pause();
+    setPaint(false);
+    setClean(true);
+    try {
+      if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.();
+    } catch {
+      /* Focus mode remains available when fullscreen is denied. */
+    }
+  }
+  async function exitPresentation() {
+    setClean(false);
+    if (document.fullscreenElement) await document.exitFullscreen();
+  }
+  async function localSave() {
+    try {
+      await storeLocalSession(encodeBinarySession(e.config, e.records, activeRecord(), extras()));
+      setToast('이 기기에 발표용 세션을 보관했습니다.');
+    } catch (err) {
+      setToast(`기기 저장 실패: ${String(err)}`);
+    }
+  }
+  function applyLoaded(loaded: ReturnType<typeof decodeSession>) {
+    stopSequence();
+    changeAsset(null);
+    if (loaded.active) e.loadRecord(loaded.active);
+    else e.loadConditions(loaded.config);
+    e.setRecords(loaded.records);
+    restoreObservations(loaded.extras?.observations ?? loaded.active?.observations);
+    setCalibration(loaded.extras?.calibration ?? loaded.active?.calibration ?? null);
+    setBookmarks(loaded.extras?.bookmarks ?? []);
+    if (loaded.extras?.analysis) setAnalysisOptions(loaded.extras.analysis);
+    if (loaded.extras?.view) setView(loaded.extras.view);
+  }
+  async function localLoad() {
+    try {
+      const blob = await readLocalSession();
+      if (!blob) {
+        setToast('이 기기에 보관한 세션이 없습니다.');
+        return;
+      }
+      applyLoaded(decodeBinarySession(await blob.arrayBuffer()));
+      setToast('기기에 보관한 세션을 불러왔습니다.');
+    } catch (err) {
+      setToast(String(err));
+    }
+  }
+  function saveBookmark() {
+    if (bookmarks.length >= 12) {
+      setToast('시점은 최대 12개까지 저장할 수 있습니다.');
+      return;
+    }
+    const pose = api.current?.rig.pose();
+    if (pose)
+      setBookmarks((a) => [...a, { id: crypto.randomUUID(), name: `시점 ${a.length + 1}`, pose }]);
+  }
+  function recallBookmark(id: string) {
+    const b = bookmarks.find((p) => p.id === id);
+    if (b) {
+      stopSequence();
+      api.current?.rig.bookmark(b.pose);
+    }
+  }
+  useEffect(() => {
+    let wasFullscreen = !!document.fullscreenElement;
+    const change = () => {
+      const active = !!document.fullscreenElement;
+      if (wasFullscreen && !active) setClean(false);
+      wasFullscreen = active;
+    };
+    document.addEventListener('fullscreenchange', change);
+    return () => document.removeEventListener('fullscreenchange', change);
+  }, []);
   async function capture() {
     const blob = await api.current?.capture();
     if (blob) {
-      download(blob, 'chladni-v04.png');
+      download(blob, 'chladni-scene.png');
       setToast('3D 장면을 저장했습니다.');
     }
   }
@@ -243,10 +429,7 @@ export default function App() {
       const loaded = binary
         ? decodeBinarySession(await file.arrayBuffer())
         : decodeSession(await file.text());
-      stopSequence();
-      if (loaded.active) e.loadRecord(loaded.active);
-      else e.change(loaded.config);
-      e.setRecords(loaded.records);
+      applyLoaded(loaded);
       setToast('세션을 불러왔습니다.');
     } catch (err) {
       setToast(String(err));
@@ -277,8 +460,7 @@ export default function App() {
             className="record-button"
             disabled={!e.modal || !e.sweep}
             onClick={() => {
-              e.saveRecord();
-              setToast('실험 조건과 결과를 기록했습니다.');
+              saveRecord();
             }}
           >
             실험 기록
@@ -292,7 +474,7 @@ export default function App() {
               <button
                 onClick={() =>
                   download(
-                    encodeBinarySession(e.config, e.records, e.snapshot()),
+                    encodeBinarySession(e.config, e.records, activeRecord(), extras()),
                     'chladni-session.chladni',
                   )
                 }
@@ -302,8 +484,8 @@ export default function App() {
               <button
                 onClick={() =>
                   download(
-                    encodeSession(e.config, e.records, e.snapshot()),
-                    'chladni-session-v4.json',
+                    encodeSession(e.config, e.records, activeRecord(), extras()),
+                    'chladni-session.json',
                   )
                 }
               >
@@ -328,7 +510,9 @@ export default function App() {
                 입자 CSV
               </button>
               <button onClick={capture}>장면 PNG</button>
-              <button onClick={() => setClean(true)}>발표 화면</button>
+              <button onClick={() => void enterPresentation()}>발표 화면</button>
+              <button onClick={() => void localSave()}>이 기기에 보관</button>
+              <button onClick={() => void localLoad()}>기기 기록 불러오기</button>
               <button
                 onClick={() =>
                   setView((v) => ({ ...v, quality: v.quality === 'low' ? 'standard' : 'low' }))
@@ -343,7 +527,10 @@ export default function App() {
       </header>
       <div className="study-heading">
         <p>입경 통제 · 구동 주파수에 따른 혼합 입자 분리</p>
-        <span>직접·역 클라드니 연구</span>
+        <span>
+          {e.config.device?.name ?? '이전 세션 · 개념 장치'} ·{' '}
+          {e.config.plate.connection ? '등가 연결부' : '이상 고정 기준'}
+        </span>
       </div>
       <div className="lab-layout">
         <aside className={`settings-slot ${mobile ? 'mobile-open' : ''}`}>
@@ -377,6 +564,9 @@ export default function App() {
           ) : space === 'analyze' ? (
             <>
               <AnalysisTools
+                field={physicalField}
+                options={analysisOptions}
+                onOptionsChange={setAnalysisOptions}
                 region={region}
                 setRegion={setRegion}
                 e={e}
@@ -391,19 +581,56 @@ export default function App() {
                   api.current?.rig.preset('top');
                 }}
               />
-              <ResearchTools e={e} m={m} />
+              <ResearchTools e={{ ...e, saveRecord, loadRecord }} m={m} />
+              <CalibrationPanel
+                config={e.config}
+                storedReport={calibration}
+                onApply={(c) => {
+                  stopSequence();
+                  e.change(c);
+                }}
+                onReport={setCalibration}
+              />
             </>
           ) : (
             <div className="device-tools">
               <div className="panel-heading">
                 <h2>장치 탐색</h2>
               </div>
+              <DeviceProfilePanel
+                config={e.config}
+                onChange={(c) => {
+                  stopSequence();
+                  e.change(c);
+                }}
+                onAsset={changeAsset}
+                onAssetClear={() => changeAsset(null)}
+                assetName={activeAsset?.reference.name}
+              />
               <StructureTools view={view} setView={updateView} />
+              <label className="exposure-control">
+                장면 노출 <output>{exposure.toFixed(2)}</output>
+                <input
+                  aria-label="장면 노출"
+                  type="range"
+                  min=".6"
+                  max="1.4"
+                  step=".05"
+                  value={exposure}
+                  onChange={(ev) => setExposure(+ev.target.value)}
+                />
+              </label>
               <div className="section-heading">
                 <h3>부품</h3>
               </div>
               <div className="part-list">
-                {PART_SPECS.filter((p) => p.id !== 'particles' && p.id !== 'speaker').map((p) => (
+                {PART_SPECS.filter(
+                  (p) =>
+                    p.id !== 'particles' &&
+                    p.id !== 'speaker' &&
+                    (e.config.device?.construction !== 'adhesive' ||
+                      !['bolt', 'washerTop', 'washerBottom'].includes(p.id)),
+                ).map((p) => (
                   <button
                     key={p.id}
                     aria-pressed={view.selected === p.id}
@@ -411,13 +638,15 @@ export default function App() {
                       setView((v) => ({ ...v, selected: v.selected === p.id ? null : p.id }))
                     }
                   >
-                    {p.label}
+                    {e.config.device?.construction === 'adhesive' && p.id === 'coupler'
+                      ? '임시 전달부 · 접착'
+                      : p.label}
                   </button>
                 ))}
               </div>
               <p className="help">
-                판 치수는 설계값, 구동부는 개념 기구입니다. 실물 사진·CAD가 제공되면 부품 매핑으로
-                교체할 수 있습니다.
+                외형은 연결 방식의 도식입니다. 실측하지 않은 스피커 내부·치수는 개념 구조이며 가져온
+                CAD는 장치 화면의 참조 모델로 표시합니다.
               </p>
             </div>
           )}
@@ -478,20 +707,28 @@ export default function App() {
               api={api}
               onSelect={(id) => setView((v) => ({ ...v, selected: id }))}
               onPaint={onPaint}
+              onContextLoss={() => {
+                e.setPlaying(false);
+                film.pause();
+              }}
             />
             <div className="stage-source">
               {space === 'device'
-                ? '장비 구조 · 개념 모델'
+                ? activeAsset
+                  ? '가져온 구조 참조 · FEM 변형 미적용'
+                  : '장비 구조 · 외형 개념'
                 : e.modal
                   ? e.run
-                    ? '판 FEM · 입자 운동 근사'
+                    ? `${e.status === '기록 불러옴' ? '저장 결과 · ' : ''}판 FEM · ${e.run.model === 'impact-contact' ? '구형 접촉 근사' : '집단 이동 근사'}`
                     : '판 FEM · 초기 입자 배치'
-                  : '중앙 구동 장비 · 설계 미리보기'}
+                  : '연결 방식 기록 · 외형/치수 미보정'}
               {view.showMode && space === 'analyze' && !presentation && ' · 고유모드 1 µm 정규화'}
               {presentation?.runProgress != null && ` · 결과 재생 ${previewTime.toFixed(2)} s`}
             </div>
             <div className="particle-caption">
-              {view.showMode && !presentation ? (
+              {pendingParticles(e.config.grains) ? (
+                '입경·밀도 입력 필요'
+              ) : view.showMode && !presentation ? (
                 '고유모드 형상 · 입자 숨김'
               ) : (
                 <>
@@ -502,7 +739,15 @@ export default function App() {
                 </>
               )}
             </div>
-            {showingMedia && <MediaPreview m={m} />}
+            {showingMedia && (
+              <MediaPreview
+                m={m}
+                field={physicalField}
+                config={e.config}
+                run={e.run}
+                time={previewTime}
+              />
+            )}
             {paint && (
               <div className="paint-hint glass">
                 판 위를 클릭해 배치 · {e.config.grains.spots.length}개 영역
@@ -541,7 +786,7 @@ export default function App() {
                 <button aria-label="고해상도 PNG 저장" onClick={capture}>
                   <Camera size={15} />
                 </button>
-                <button aria-label="발표 화면" onClick={() => setClean(true)}>
+                <button aria-label="발표 화면" onClick={() => void enterPresentation()}>
                   <Maximize2 size={15} />
                 </button>
               </div>
@@ -570,6 +815,42 @@ export default function App() {
                 </span>
               </div>
             </div>
+            {clean && (
+              <div className="presentation-shelf glass">
+                <span>{e.run ? '계산 결과 재생' : '장치 관찰'}</span>
+                <select
+                  aria-label="발표 기록"
+                  disabled={!e.records.some((r) => r.run)}
+                  value=""
+                  onChange={(ev) => {
+                    const r = e.records.find((r) => r.id === ev.target.value);
+                    if (r) loadRecord(r);
+                  }}
+                >
+                  <option value="">기록 선택</option>
+                  {e.records
+                    .filter((r) => r.run)
+                    .map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name} · {r.config.drive.frequency.toFixed(1)} Hz
+                      </option>
+                    ))}
+                </select>
+                <button onClick={() => setDirectorOpen((v) => !v)}>장면 연출</button>
+                <select
+                  aria-label="발표 카메라 시점"
+                  value=""
+                  onChange={(ev) => recallBookmark(ev.target.value)}
+                >
+                  <option value="">저장 시점</option>
+                  {bookmarks.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             {view.selected && (
               <div className="part-popover glass">
                 <button
@@ -578,9 +859,17 @@ export default function App() {
                 >
                   <X size={13} />
                 </button>
-                <strong>{PART_SPECS.find((p) => p.id === view.selected)?.label}</strong>
+                <strong>
+                  {e.config.device?.construction === 'adhesive' && view.selected === 'coupler'
+                    ? '임시 전달부 · 접착'
+                    : PART_SPECS.find((p) => p.id === view.selected)?.label}
+                </strong>
                 <p>{PART_SPECS.find((p) => p.id === view.selected)?.connection}</p>
-                <small>개념 기구 · 실측 자료 미제공</small>
+                <small>
+                  {e.config.device?.construction === 'adhesive'
+                    ? '무관통 연결 · 외형 개념'
+                    : '볼트 체결 개념 · 실물 아님'}
+                </small>
               </div>
             )}
             {e.busy && e.busyKind !== 'field' && (
@@ -592,13 +881,32 @@ export default function App() {
               </div>
             )}
             {clean && (
-              <button className="exit-presentation glass" onClick={() => setClean(false)}>
+              <button className="exit-presentation glass" onClick={() => void exitPresentation()}>
                 <X size={14} />
                 발표 종료
               </button>
             )}
           </section>
           <div className="scene-dock">
+            {!clean && (
+              <div className="bookmark-menu">
+                <button onClick={saveBookmark}>시점 저장</button>
+                {bookmarks.length > 0 && (
+                  <select
+                    aria-label="카메라 북마크"
+                    value=""
+                    onChange={(ev) => recallBookmark(ev.target.value)}
+                  >
+                    <option value="">저장 시점</option>
+                    {bookmarks.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
             <ParticleDisplay view={view} setView={setView} grains={e.config.grains} />
             {directorOpen && (
               <DirectorControls
@@ -704,6 +1012,7 @@ export default function App() {
           )}
           {space === 'analyze' && (
             <ResponsePlot
+              absolute={!!e.config.plate.connection}
               sweep={e.sweep}
               frequency={e.config.drive.frequency}
               measured={m.measured}
@@ -715,7 +1024,19 @@ export default function App() {
             />
           )}
           <div className="model-caption">
-            <span>입자 이동: 비보정 근사 · 역 클라드니 예측 미지원</span>
+            <span>
+              {e.config.plate.connection ? '유연 연결부 FEM' : '이상 고정 FEM 기준'} · 입자 비보정 ·
+              역패턴 검증 없음
+            </span>
+            <span className="offline-status">
+              {offline === 'ready'
+                ? '오프라인 준비됨'
+                : offline === 'preparing'
+                  ? '오프라인 준비 중'
+                  : offline === 'dev'
+                    ? '로컬 개발 서버'
+                    : '오프라인 캐시 미지원'}
+            </span>
             <button onClick={() => setAbout(true)}>모델 범위</button>
           </div>
         </main>
@@ -755,13 +1076,15 @@ export default function App() {
         <h3>입자: 운동 근사</h3>
         <p>
           두 입자군의 입경·밀도·마찰·형태 계수는 독립적입니다. 입경은 지정 구간의 균등분포입니다.
-          주기 평균 이동과 Stokes 완화를 근사하며 입자 간 충돌·공기 유동은 계산하지 않습니다. 분리가
-          일어나지 않을 수도 있고, 실제 분리 효율을 예측하지 않습니다.
+          집단 이동 근사와 소규모 구형 접촉 해석을 구분합니다. 접촉 해석은 도약·충돌·Coulomb
+          마찰·구의 회전을 적분하지만 입자 간 충돌·공기 유동은 계산하지 않습니다. 분리가 일어나지
+          않을 수도 있고, 실제 분리 효율을 예측하지 않습니다.
         </p>
         <h3>역 클라드니: 관측과 비교</h3>
         <p>
           역패턴을 생성하는 검증된 유동 모델이 없습니다. 역 클라드니는 실측 사진·영상으로 비교하며,
-          생성한 역패턴을 계산 결과로 제시하지 않습니다. 사진의 원근 정합은 지원하지 않습니다.
+          생성한 역패턴을 계산 결과로 제시하지 않습니다. 사진·영상은 네 모서리를 지정해 판 좌표로
+          정합합니다.
         </p>
         <h3>표시와 계산</h3>
         <p>
@@ -774,8 +1097,7 @@ export default function App() {
         <h3>장면 연출</h3>
         <p>
           연출 타임라인은 계산 데이터와 분리돼 있습니다. 진동 확대·카메라·분해는 관찰을 위한
-          표시이고 계산 조건을 바꾸지 않습니다. 표시 변형은 최대 ±25 mm로 제한합니다. 장치 부품은
-          실물 사진·CAD가 없는 개념 기구입니다.
+          표시이고 계산 조건을 바꾸지 않습니다. 장치 부품은 실물 사진·CAD가 없는 개념 기구입니다.
         </p>
       </dialog>
     </div>

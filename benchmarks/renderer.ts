@@ -87,7 +87,7 @@ async function runCase(
     modal,
     sweep,
     run,
-    created: '2026-11-17',
+    created: '2026-11-24',
   };
   const jsonStart = performance.now(),
     jsonBytes = new Blob([encodeSession(config, [], record)]).size,
@@ -220,3 +220,32 @@ async function runCase(
   return final;
 }
 Object.assign(window, { chladniBenchmark: runCase });
+Object.assign(window, {
+  chladniContactBenchmark: async (count: number) => {
+    const config = cloneConfig(DEFAULT_CONFIG);
+    config.grains.count = count;
+    config.grains.model = 'contact';
+    config.drive.duration = 0.5;
+    config.drive.frequency = 249.625;
+    const start = performance.now(),
+      result = await job(worker, ++id, 'run', config),
+      run: Run = result.run;
+    return {
+      count,
+      duration: config.drive.duration,
+      frequencyHz: config.drive.frequency,
+      elapsedMs: run.elapsedMs,
+      workerRoundTripMs: performance.now() - start,
+      recordingBytes: run.frames.reduce(
+        (n, f) =>
+          n +
+          (f.positions as Float32Array).byteLength +
+          (f.distance as Float32Array).byteLength +
+          (f.heights as Float32Array).byteLength,
+        0,
+      ),
+      diagnostics: run.diagnostics,
+      motion: run.motion,
+    };
+  },
+});

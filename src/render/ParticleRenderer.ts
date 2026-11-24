@@ -4,12 +4,12 @@ import type { Config, Run, ParticleVisualProperties } from '../experiment/types'
 import { initialParticles, framePair } from '../simulation/particles';
 import { PARTICLE_PRESETS, materialId, DEFAULT_PARTICLE_VISUAL } from '../particles/presets';
 import { PlateField, FIELD_GLSL } from './PlateField';
-const attributes = `attribute vec2 iA;attribute vec2 iB;attribute float iDiameter;attribute float iSeed;attribute vec3 iColor;attribute float iHeight;attribute float iResolve;`;
+const attributes = `attribute vec3 iA;attribute vec3 iB;attribute float iDiameter;attribute float iSeed;attribute vec3 iColor;attribute float iHeight;attribute float iResolve;`;
 const common = `
 uniform vec4 uCut;uniform float uClipping;bool particleOutside(vec3 c){return uClipping>.5&&dot(vec4((modelMatrix*vec4(c,1.)).xyz,1.),uCut)<0.;}
 uniform vec2 uPlate;uniform float uAlpha;uniform float uFocal;uniform float uPixelRatio;uniform float uMagnification;uniform float uMinimum;uniform float uObserve;uniform float uDetail;uniform float uKind;
-vec2 particleUV(){return mix(iA,iB,uAlpha);}
-vec3 particleCenter(){vec2 uv=particleUV();return vec3((uv.x-.5)*uPlate.x,plateLift(uv),(uv.y-.5)*uPlate.y);}
+vec2 particleUV(){return mix(iA.xy,iB.xy,uAlpha);}
+vec3 particleCenter(){vec2 uv=particleUV();return vec3((uv.x-.5)*uPlate.x,plateLift(uv)+max(0.,mix(iA.z,iB.z,uAlpha))*12.,(uv.y-.5)*uPlate.y);}
 float particleDiameter(vec3 center){float z=max(.005,-(modelViewMatrix*vec4(center,1.0)).z);return max(iDiameter*12.0*uMagnification,uMinimum*z/uFocal)*uObserve+iDiameter*12.0*(1.0-uObserve);}
 mat3 turn(float a){float c=cos(a),s=sin(a),x=.25*sin(iSeed*32.),z=.20*cos(iSeed*19.),cx=cos(x),sx=sin(x),cz=cos(z),sz=sin(z);return mat3(c,0.,s,0.,1.,0.,-s,0.,c)*mat3(1.,0.,0.,0.,cx,sx,0.,-sx,cx)*mat3(cz,sz,0.,-sz,cz,0.,0.,0.,1.);}
 `;
@@ -32,6 +32,7 @@ interface Batch {
 export class ParticleRenderer {
   root = new T.Group();
   batches: Batch[] = [];
+  microNormal = createGrainNormal();
   source: unknown = null;
   signature = '';
   lastIndex = -2;
@@ -64,7 +65,7 @@ export class ParticleRenderer {
   visual = DEFAULT_PARTICLE_VISUAL;
   constructor(private field: PlateField) {}
   rebuild(c: Config, run: Run | null, visual: ParticleVisualProperties) {
-    const seedKey = JSON.stringify(c.grains);
+    const seedKey = JSON.stringify([c.grains, c.plate.width, c.plate.height]);
     if (!run && seedKey !== this.seedKey) {
       this.seeds = initialParticles(c);
       this.seedKey = seedKey;
@@ -97,8 +98,8 @@ export class ParticleRenderer {
       const preset = PARTICLE_PRESETS[materialId(c.grains, slot)],
         n = ids.length,
         indices = Uint32Array.from(ids),
-        a = new T.InstancedBufferAttribute(new Float32Array(n * 2), 2),
-        b = new T.InstancedBufferAttribute(new Float32Array(n * 2), 2),
+        a = new T.InstancedBufferAttribute(new Float32Array(n * 3), 3),
+        b = new T.InstancedBufferAttribute(new Float32Array(n * 3), 3),
         diameter = new T.InstancedBufferAttribute(new Float32Array(n), 1),
         seed = new T.InstancedBufferAttribute(new Float32Array(n), 1),
         color = new T.InstancedBufferAttribute(new Float32Array(n * 3), 3),
@@ -218,10 +219,15 @@ void main(){float detail=uDetail*vResolve*smoothstep(3.0,6.0,vPixels);if(vSeed<d
       }
       base.dispose();
       const mm = new T.MeshPhysicalMaterial({
-        color: '#ffffff',
+        color: preset.kind === 1 ? '#c0c8c1' : '#e5e5d9',
         roughness: appearance?.roughness ?? preset.roughness,
         metalness: 0,
-        clearcoat: preset.kind === 3 ? 0.45 : 0.05,
+        clearcoat: preset.kind === 3 ? 0.35 : 0.02,
+        normalMap: this.microNormal,
+        normalScale: new T.Vector2(
+          preset.kind === 1 ? 0.18 : 0.12,
+          preset.kind === 1 ? 0.18 : 0.12,
+        ),
         clearcoatRoughness: 0.18,
       });
       mm.onBeforeCompile = (shader) => {
@@ -346,15 +352,17 @@ void main(){float detail=uDetail*vResolve*smoothstep(3.0,6.0,vPixels);if(vSeed<d
             dx = (Math.sin(displayId * 2.39) * jitter) / c.plate.width,
             dy = (Math.cos(displayId * 1.71) * jitter) / c.plate.height;
           if (!sequential)
-            batch.a.setXY(
+            batch.a.setXYZ(
               j,
               Math.max(0, Math.min(1, aa[id * 2] + dx)),
               Math.max(0, Math.min(1, aa[id * 2 + 1] + dy)),
+              pair?.a.heights?.[id] ?? 0,
             );
-          batch.b.setXY(
+          batch.b.setXYZ(
             j,
             Math.max(0, Math.min(1, bb[id * 2] + dx)),
             Math.max(0, Math.min(1, bb[id * 2 + 1] + dy)),
+            pair?.b.heights?.[id] ?? 0,
           );
         }
         if (!sequential) batch.a.needsUpdate = true;
@@ -402,7 +410,7 @@ void main(){float detail=uDetail*vResolve*smoothstep(3.0,6.0,vPixels);if(vSeed<d
         z =
           (b.a.getY(i) + (b.b.getY(i) - b.a.getY(i)) * alpha - 0.5) * plate.y +
           this.root.position.z,
-        y = this.root.position.y;
+        y = this.root.position.y + (b.a.getZ(i) + (b.b.getZ(i) - b.a.getZ(i)) * alpha) * 12;
       const vx = m[0] * x + m[4] * y + m[8] * z + m[12],
         vy = m[1] * x + m[5] * y + m[9] * z + m[13],
         vz = m[2] * x + m[6] * y + m[10] * z + m[14];
@@ -458,11 +466,17 @@ void main(){float detail=uDetail*vResolve*smoothstep(3.0,6.0,vPixels);if(vSeed<d
     this.batches = [];
   }
   dispose() {
+    this.microNormal.dispose();
     this.clear();
   }
 }
 function grainGeometry(kind: number): T.BufferGeometry {
-  if (kind === 1) return new RoundedBoxGeometry(1.4, 1.35, 1.45, 2, 0.065);
+  if (kind === 1) return new RoundedBoxGeometry(1.35, 1.22, 1.28, 3, 0.11);
+  if (kind === 5) {
+    const g = new T.IcosahedronGeometry(1, 0);
+    g.scale(1.1, 0.35, 0.8);
+    return g;
+  }
   if (kind === 2) {
     const g = new T.OctahedronGeometry(1, 0);
     g.scale(0.8, 1.1, 0.7);
@@ -480,4 +494,31 @@ function grainGeometry(kind: number): T.BufferGeometry {
   }
   g.computeVertexNormals();
   return g;
+}
+
+function createGrainNormal() {
+  const size = 64,
+    a = new Uint8Array(size * size * 4);
+  for (let i = 0; i < size * size; i++) {
+    const n = Math.sin(i * 12.9898 + 7) * 43758.5453,
+      m = Math.sin(i * 5.39 + 19) * 19341.21;
+    a.set(
+      [
+        128 + Math.floor((n - Math.floor(n) - 0.5) * 42),
+        128 + Math.floor((m - Math.floor(m) - 0.5) * 42),
+        253,
+        255,
+      ],
+      i * 4,
+    );
+  }
+  const t = new T.DataTexture(a, size, size, T.RGBAFormat);
+  t.wrapS = t.wrapT = T.RepeatWrapping;
+  t.repeat.set(5, 5);
+  t.magFilter = T.LinearFilter;
+  t.minFilter = T.LinearMipmapLinearFilter;
+  t.generateMipmaps = true;
+  t.colorSpace = T.NoColorSpace;
+  t.needsUpdate = true;
+  return t;
 }

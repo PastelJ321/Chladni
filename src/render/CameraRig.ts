@@ -3,6 +3,8 @@ import type { CameraPose } from '../animation/director';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 export class CameraRig {
   elevated = false;
+  plateY = 2.24;
+  plateScale = 1;
   onManual: () => void = () => {};
   camera = new T.PerspectiveCamera(32, 1, 0.005, 100);
   controls: OrbitControls;
@@ -22,23 +24,29 @@ export class CameraRig {
     this.preset('hero', true);
   }
   preset(kind: 'hero' | 'top' | 'macro', instant = false) {
+    const lift = this.plateY - 2.24;
     this.camera.fov = 32;
     this.camera.updateProjectionMatrix();
     this.target.set(
-      kind === 'macro' ? 0.55 : 0,
-      kind === 'macro' ? 2.252 : this.elevated ? 3.1 : kind === 'hero' ? 1.5 : 2.24,
-      kind === 'macro' ? 0.55 : 0,
+      kind === 'macro' ? 0.55 * this.plateScale : 0,
+      (kind === 'macro' ? 2.252 : this.elevated ? 3.1 : kind === 'hero' ? 1.5 : 2.24) + lift,
+      kind === 'macro' ? 0.55 * this.plateScale : 0,
     );
     this.goal = new T.Vector3(
       ...((kind === 'top'
         ? [0, this.elevated ? 14 : 10.5, 0.03]
         : kind === 'macro'
-          ? [0.68, 2.48, 0.92]
+          ? [0.94, 2.89, 1.53]
           : this.elevated
             ? [7.3, 8, 9.5]
             : [4.7, 4.4, 6.8]) as [number, number, number]),
     );
-    const fit = kind === 'macro' ? 1 : Math.max(1, 1.16 / this.camera.aspect);
+    this.goal.y += lift;
+    if (kind === 'macro') {
+      this.goal.x += 0.55 * (this.plateScale - 1);
+      this.goal.z += 0.55 * (this.plateScale - 1);
+    }
+    const fit = kind === 'macro' ? 1 : Math.max(1, this.plateScale, 1.16 / this.camera.aspect);
     this.goal.sub(this.target).multiplyScalar(fit).add(this.target);
     if (instant || matchMedia('(prefers-reduced-motion: reduce)').matches) {
       this.camera.position.copy(this.goal);
@@ -53,6 +61,16 @@ export class CameraRig {
       target: this.controls.target.toArray(),
       fov: this.camera.fov,
     };
+  }
+  bookmark(p: CameraPose) {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      this.restore(p);
+      return;
+    }
+    this.camera.fov = p.fov ?? 32;
+    this.camera.updateProjectionMatrix();
+    this.target.fromArray(p.target);
+    this.goal = new T.Vector3().fromArray(p.position);
   }
   restore(p: { position: number[]; target: number[]; fov?: number }) {
     this.goal = null;

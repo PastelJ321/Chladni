@@ -8,11 +8,13 @@ export function ResponsePlot({
   frequency,
   onSelect,
   measured = [],
+  absolute = false,
 }: {
   sweep: Sweep | null;
   frequency: number;
   onSelect: (f: number) => void;
   measured?: MeasuredPoint[];
+  absolute?: boolean;
 }) {
   const points = sweep?.points ?? [],
     min = points[0]?.frequency ?? 0,
@@ -31,7 +33,7 @@ export function ResponsePlot({
       <div className="chart-header">
         <div>
           <h3>주파수 응답</h3>
-          <span>질량 가중 상대 RMS 변위 · 로그 축</span>
+          <span>질량 가중 {absolute ? '절대' : '상대'} RMS 변위 · 로그 축</span>
         </div>
         <span className="source-tag">FEM 계산</span>
       </div>
@@ -53,7 +55,7 @@ export function ResponsePlot({
       >
         {[0, 1, 2, 3, 4].map((i) => (
           <g key={i}>
-            <line x1="48" x2="668" y1={25 + i * 25} y2={25 + i * 25} stroke="#e1e4e5" />
+            <line x1="48" x2="668" y1={25 + i * 25} y2={25 + i * 25} stroke="#29495c" />
             <text x="40" y={28 + i * 25} textAnchor="end">
               {((peak * 1e6) / 10 ** i).toPrecision(2)}
             </text>
@@ -64,7 +66,7 @@ export function ResponsePlot({
             {f.toFixed(0)} Hz
           </text>
         ))}
-        <path d={path} fill="none" stroke="#416d89" strokeWidth="2" />
+        <path d={path} fill="none" stroke="#59c4d2" strokeWidth="2" />
         <path
           d={measuredPath}
           fill="none"

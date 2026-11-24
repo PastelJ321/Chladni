@@ -2,6 +2,8 @@ import { seededRandom } from '../concept/physics';
 import type { Config, Field, GrainFrame, ModalResult, Run } from '../experiment/types';
 import { configKey, particleGroup } from '../experiment/config';
 import { responseField, sampleGrid } from '../solver/response';
+import { numberRatio, pendingParticles } from '../particles/presets';
+import { simulateContact } from './contact';
 export function initialParticles(c: Config) {
   const g = c.grains,
     rand = seededRandom(g.seed),
@@ -9,8 +11,9 @@ export function initialParticles(c: Config) {
     species: number[] = [],
     diameters: number[] = [],
     masses: number[] = [];
+  const ratio = numberRatio(g);
   for (let i = 0; i < g.count; i++) {
-    const salt = g.kind === 'salt' || (g.kind === 'mixture' && rand() < g.ratio);
+    const salt = g.kind === 'salt' || (g.kind === 'mixture' && rand() < ratio);
     species.push(salt ? 1 : 0);
     const group = particleGroup(g, salt ? 1 : 0);
     const diameter = group.diameter * (1 + group.spread * (2 * rand() - 1));
@@ -40,6 +43,8 @@ export function simulateParticles(
   modal: ModalResult,
   progress: (v: number) => void = () => {},
 ): Run {
+  if (pendingParticles(c.grains)) throw Error('선택한 입자의 평균 입경과 입자 밀도를 입력하세요.');
+  if (c.grains.model === 'contact') return simulateContact(c, modal, initialParticles(c), progress);
   const start = performance.now(),
     initial = initialParticles(c),
     g = c.grains,
@@ -136,6 +141,7 @@ export function simulateParticles(
   }
   return {
     source: 'approximation',
+    model: 'cycle-averaged-drift',
     key: configKey(c),
     config: structuredClone(c),
     fields,
@@ -192,6 +198,11 @@ export function frameAt(run: Run, time: number, out?: GrainFrame): GrainFrame {
     f.positions[i] = p.a.positions[i] + (p.b.positions[i] - p.a.positions[i]) * p.alpha;
   for (let i = 0; i < f.distance.length; i++)
     f.distance[i] = p.a.distance[i] + (p.b.distance[i] - p.a.distance[i]) * p.alpha;
+  if (p.a.heights && p.b.heights) {
+    f.heights ??= new Float32Array(p.a.heights.length);
+    for (let i = 0; i < f.heights.length; i++)
+      f.heights[i] = p.a.heights[i] + (p.b.heights[i] - p.a.heights[i]) * p.alpha;
+  }
   return f;
 }
 export function interpolateField(a: Field, b: Field, t: number): Field {

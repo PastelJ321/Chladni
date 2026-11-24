@@ -1,10 +1,12 @@
 import type { Config, ViewSettings, Grains, ParticleGroup } from './types';
+import { createDeviceProfile, validateDeviceProfile } from './device';
 export const MATERIALS = {
   aluminum: { label: '알루미늄', young: 69e9, density: 2700, poisson: 0.33 },
   steel: { label: '강철', young: 200e9, density: 7850, poisson: 0.3 },
   brass: { label: '황동', young: 100e9, density: 8500, poisson: 0.34 },
 };
 export const DEFAULT_CONFIG: Config = {
+  device: createDeviceProfile('current'),
   plate: {
     width: 0.3,
     height: 0.3,
@@ -92,10 +94,22 @@ export const DEFAULT_VIEW: ViewSettings = {
   },
 };
 export const cloneConfig = (c: Config): Config => JSON.parse(JSON.stringify(c));
-export const configKey = (c: Config) => JSON.stringify(c);
+export const configKey = (c: Config) => {
+  if (!c.device) return JSON.stringify(c); // archived v0.2–v0.4 keys stay byte-compatible
+  const plate = { ...c.plate },
+    grains = structuredClone(c.grains);
+  if (plate.connection) {
+    plate.connection = { ...plate.connection };
+    delete plate.connection.ranges;
+    plate.connection.reference = '';
+    plate.connection.status = 'estimated';
+  }
+  if (grains.groups) for (const group of Object.values(grains.groups)) delete group.evidence;
+  return JSON.stringify({ plate, drive: c.drive, grains });
+};
 // Only stiffness/mass/constraint inputs affect the eigensystem. Damping belongs to response.
-export const plateKey = (p: Config['plate']) =>
-  JSON.stringify([
+export const plateKey = (p: Config['plate']) => {
+  const key: unknown[] = [
     p.width,
     p.height,
     p.thickness,
@@ -106,7 +120,23 @@ export const plateKey = (p: Config['plate']) =>
     p.boundary,
     p.boundary === 'center' ? Math.round(p.supportX * p.mesh) : 0,
     p.boundary === 'center' ? Math.round(p.supportY * p.mesh) : 0,
-  ]);
+  ];
+  if (p.connection?.enabled) {
+    const q = p.connection;
+    key.push([
+      'compliant-patch',
+      p.supportX,
+      p.supportY,
+      q.kz,
+      q.krx,
+      q.kry,
+      q.mass,
+      q.width,
+      q.height,
+    ]);
+  }
+  return JSON.stringify(key);
+};
 export const legacyPlateKey = (p: Config['plate']) => JSON.stringify(p);
 export const responseKey = (c: Config, frequency = c.drive.frequency) =>
   JSON.stringify([
@@ -116,10 +146,19 @@ export const responseKey = (c: Config, frequency = c.drive.frequency) =>
     c.drive.kind === 'base' ? c.drive.displacement : c.drive.force,
     c.drive.kind === 'force' ? [c.drive.x, c.drive.y] : null,
     frequency,
+    ...(c.plate.connection?.enabled
+      ? [[c.plate.connection.cz, c.plate.connection.crx, c.plate.connection.cry]]
+      : []),
   ]);
 export const sweepKey = (c: Config) =>
   JSON.stringify([responseKey(c, 0), c.drive.start, c.drive.end, c.drive.samples]);
 export function validateConfig(c: Config) {
+  if (c.device) validateDeviceProfile(c.device);
+  if (c.deviceLibrary) {
+    if (!Array.isArray(c.deviceLibrary) || c.deviceLibrary.length > 8)
+      throw Error('장치 프로필은 최대 8개입니다.');
+    c.deviceLibrary.forEach(validateDeviceProfile);
+  }
   const p = c?.plate,
     d = c?.drive,
     g = c?.grains;
@@ -141,6 +180,42 @@ export function validateConfig(c: Config) {
     !['center', 'simply-supported', 'clamped', 'cantilever'].includes(p.boundary)
   )
     throw Error('판 물성 또는 메시 조건이 올바르지 않습니다.');
+  const connection = p.connection;
+  if (connection) {
+    if (
+      connection.enabled !== true ||
+      p.boundary !== 'center' ||
+      !within(connection.kz, 1, 1e10) ||
+      !within(connection.krx, 1e-5, 1e7) ||
+      !within(connection.kry, 1e-5, 1e7) ||
+      !within(connection.cz, 0, 1e6) ||
+      !within(connection.crx, 0, 1e5) ||
+      !within(connection.cry, 0, 1e5) ||
+      !within(connection.mass, 0, 5) ||
+      !within(connection.width, 0.001, p.width) ||
+      !within(connection.height, 0.001, p.height) ||
+      !['estimated', 'measured', 'calibrated'].includes(connection.status) ||
+      typeof connection.reference !== 'string' ||
+      p.supportX * p.width < connection.width / 2 ||
+      (1 - p.supportX) * p.width < connection.width / 2 ||
+      p.supportY * p.height < connection.height / 2 ||
+      (1 - p.supportY) * p.height < connection.height / 2
+    )
+      throw Error('연결부 강성·감쇠·접촉 영역을 확인하세요. 접촉 영역은 판 안에 있어야 합니다.');
+    if (
+      connection.ranges &&
+      Object.entries(connection.ranges).some(
+        ([key, range]) =>
+          !['kz', 'krx', 'kry', 'cz', 'mass'].includes(key) ||
+          !Array.isArray(range) ||
+          range.length !== 2 ||
+          !range.every(Number.isFinite) ||
+          range[0] < 0 ||
+          range[1] < range[0],
+      )
+    )
+      throw Error('연결부 추정 범위를 확인하세요.');
+  }
   if (
     ![p.supportX, p.supportY, d.x, d.y].every((v) => within(v, 0, 1)) ||
     !within(d.frequency, 1, 5000) ||
@@ -159,19 +234,25 @@ export function validateConfig(c: Config) {
     for (const group of [g.groups.sand, g.groups.salt]) {
       if (
         !group ||
-        !within(group.diameter, 50e-6, 0.002) ||
+        !within(group.diameter, 1e-6, 0.002) ||
         !within(group.spread, 0, 0.8) ||
-        !within(group.density, 500, 10000) ||
+        !within(group.density, 10, 10000) ||
         !within(group.friction, 0.05, 1) ||
         !within(group.shape, 0.5, 2) ||
         (group.material !== undefined &&
-          !['sand', 'salt', 'sugar', 'glass', 'custom'].includes(group.material))
+          !['sand', 'salt', 'sugar', 'tea', 'glass', 'custom'].includes(group.material)) ||
+        (group.pending &&
+          (!Array.isArray(group.pending) ||
+            group.pending.some((k) => !['diameter', 'density'].includes(k)))) ||
+        (group.restitution !== undefined && !within(group.restitution, 0, 1))
       )
         throw Error('입자군별 조건을 확인하세요.');
     }
   if (
     !within(g.count, 20, 50000) ||
     !Number.isInteger(g.count) ||
+    (g.model !== undefined && !['drift', 'contact'].includes(g.model)) ||
+    (g.ratioBasis !== undefined && !['count', 'mass'].includes(g.ratioBasis)) ||
     !within(g.diameter, 0.00005, 0.002) ||
     !within(g.spread, 0, 0.8) ||
     !within(g.density, 500, 10000) ||
@@ -218,5 +299,6 @@ export function sieveGroup(group: ParticleGroup, lower: number, upper: number): 
     diameter: (lower + upper) * 0.5e-6,
     spread: (upper - lower) / (upper + lower),
     sieve: `${lower}–${upper}`,
+    ...(group.pending ? { pending: group.pending.filter((k) => k !== 'diameter') } : {}),
   };
 }

@@ -1,4 +1,20 @@
 export type Boundary = 'center' | 'simply-supported' | 'clamped' | 'cantilever';
+export type ConnectionParameter = 'kz' | 'krx' | 'kry' | 'cz' | 'mass';
+export interface PlateConnection {
+  enabled: true;
+  kz: number;
+  krx: number;
+  kry: number;
+  cz: number;
+  crx: number;
+  cry: number;
+  mass: number;
+  width: number;
+  height: number;
+  status: 'estimated' | 'measured' | 'calibrated';
+  reference: string;
+  ranges?: Partial<Record<ConnectionParameter, [number, number]>>;
+}
 export interface Plate {
   width: number;
   height: number;
@@ -12,6 +28,14 @@ export interface Plate {
   supportY: number;
   mesh: number;
   material: string;
+  connection?: PlateConnection;
+  dampingSource?: {
+    method: 'half-power';
+    frequency: number;
+    lowerHz: number;
+    upperHz: number;
+    reference: string;
+  };
 }
 export interface Drive {
   kind: 'base' | 'force';
@@ -26,7 +50,7 @@ export interface Drive {
   duration: number;
   signal: 'sine' | 'sweep';
 }
-export type ParticleMaterialId = 'sand' | 'salt' | 'sugar' | 'glass' | 'custom';
+export type ParticleMaterialId = 'sand' | 'salt' | 'sugar' | 'tea' | 'glass' | 'custom';
 export type NumericArray = number[] | Float32Array;
 export interface ParticlePhysicalProperties {
   diameterMeters: number;
@@ -53,6 +77,13 @@ export interface ParticleGroup {
   friction: number;
   shape: number;
   sieve: string;
+  pending?: ('diameter' | 'density')[];
+  evidence?: {
+    size: 'measured' | 'estimated' | 'default';
+    density: 'measured' | 'estimated' | 'default';
+    reference: string;
+  };
+  restitution?: number;
 }
 export interface Grains {
   groups?: { sand: ParticleGroup; salt: ParticleGroup }; // Absent in unchanged v0.2 records.
@@ -70,11 +101,16 @@ export interface Grains {
   distribution: 'uniform' | 'spot' | 'paint';
   spots: [number, number][];
   transport: number;
+  ratioBasis?: 'count' | 'mass';
+  model?: 'drift' | 'contact';
+  stillAirDrag?: boolean;
 }
 export interface Config {
   plate: Plate;
   drive: Drive;
   grains: Grains;
+  device?: import('./device').DeviceProfile;
+  deviceLibrary?: import('./device').DeviceProfile[];
 }
 export interface ModalResult {
   source: 'FEM';
@@ -88,6 +124,7 @@ export interface ModalResult {
   mass: number;
   support: [number, number];
   elapsedMs: number;
+  connector?: { displacement: number[]; rotationX: number[]; rotationY: number[] };
 }
 export interface Field {
   size: number;
@@ -113,6 +150,7 @@ export interface GrainFrame {
   time: number;
   positions: NumericArray;
   distance: NumericArray;
+  heights?: NumericArray;
 }
 export interface Run {
   key: string;
@@ -135,6 +173,16 @@ export interface Run {
   };
   dt: number;
   elapsedMs: number;
+  model?: 'cycle-averaged-drift' | 'impact-contact';
+  diagnostics?: {
+    impacts: number;
+    energyDissipated: number;
+    particleInteractions: false;
+    stillAirDrag: boolean;
+    maxPenetration: number;
+    substeps: number;
+    maxHopHeight?: number;
+  };
 }
 export interface RecordEntry {
   id: string;
@@ -144,6 +192,13 @@ export interface RecordEntry {
   sweep: Sweep;
   run: Run | null;
   created: string;
+  notes?: {
+    observation: string;
+    discrepancy: string;
+    reproducibility: 'unknown' | 'single' | 'reproduced' | 'failed';
+  };
+  observations?: import('../analysis/observationTypes').ObservationSnapshot;
+  calibration?: import('../solver/calibration').CalibrationReport;
 }
 export type Workspace = 'experiment' | 'analyze' | 'device';
 export type Layer =

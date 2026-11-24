@@ -16,8 +16,8 @@
     -apple-system,
     BlinkMacSystemFont,
     sans-serif;
-  color: #29323b;
-  background: #e9ebed;
+  color: #eaf4f6;
+  background: #0c283b;
   font-size: 13px;
   font-synthesis: none;
   --blue: #385f7b;
@@ -40,10 +40,10 @@ select {
 }
 button {
   cursor: pointer;
-  border: 1px solid #d3d9de;
-  background: #fdfdfb;
+  border: 1px solid #2a5065;
+  background: #0c283b;
   border-radius: 6px;
-  color: #3d4852;
+  color: #eaf4f6;
   padding: 8px 12px;
   display: inline-flex;
   align-items: center;
@@ -52,8 +52,8 @@ button {
   transition: background 0.15s;
 }
 button:hover {
-  background: #e7edf1;
-  border-color: #b3c2cd;
+  background: #0c283b;
+  border-color: #2a5065;
 }
 button:disabled {
   cursor: default;
@@ -61,22 +61,22 @@ button:disabled {
 }
 input,
 select {
-  color: #303c47;
-  background: #fff;
-  border: 1px solid #cdd4d9;
+  color: #eaf4f6;
+  background: #0c283b;
+  border: 1px solid #2a5065;
   border-radius: 5px;
   padding: 7px;
   min-width: 0;
 }
 input[type='range'] {
   padding: 0;
-  accent-color: #53778f;
+  accent-color: #42b6c6;
   height: 4px;
   cursor: pointer;
   min-width: 30px;
 }
 input[type='checkbox'] {
-  accent-color: #496e87;
+  accent-color: #42b6c6;
 }
 button:focus-visible,
 input:focus-visible,
@@ -105,18 +105,18 @@ h3 {
   font-weight: 500;
 }
 small {
-  font-size: 11px;
+  font-size: 12px;
 }
 a {
-  color: #466c84;
+  color: #aac7d3;
 }
 svg {
   flex-shrink: 0;
 }
 .primary {
-  background: #416783;
-  color: #fff;
-  border-color: #416783;
+  background: #194759;
+  color: #ffffff;
+  border-color: #2a5065;
 }
 .primary:hover {
   background: #34566f;
@@ -129,5 +129,5 @@ svg {
   border: 0;
   background: none;
   font-size: 12px;
-  color: #637585;
+  color: #aac7d3;
 }

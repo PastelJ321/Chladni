@@ -2,6 +2,7 @@ import { Matrix, CholeskyDecomposition, EigenvalueDecomposition, solve } from 'm
 import type { ModalResult, Plate } from '../experiment/types';
 import { plateKey } from '../experiment/config';
 import { basis, pointDofs } from './basis';
+import { connectorCoordinates, dot } from './connector';
 export function solvePlate(p: Plate, progress: (v: number) => void = () => {}): ModalResult {
   const start = performance.now(),
     n = p.mesh,
@@ -44,6 +45,25 @@ export function solvePlate(p: Plate, progress: (v: number) => void = () => {}): 
           M.set(ids[i], ids[j], M.get(ids[i], ids[j]) + me.get(i, j));
         }
     }
+  const attachment = connectorCoordinates(p),
+    connection = p.connection;
+  if (attachment && connection) {
+    const coordinates = [attachment.displacement, attachment.rotationX, attachment.rotationY],
+      stiffness = [connection.kz, connection.krx, connection.kry],
+      inertia = [
+        connection.mass,
+        (connection.mass * connection.height ** 2) / 12,
+        (connection.mass * connection.width ** 2) / 12,
+      ];
+    for (let a = 0; a < 3; a++)
+      for (let i = 0; i < size; i++)
+        if (coordinates[a][i] !== 0)
+          for (let j = 0; j < size; j++)
+            if (coordinates[a][j] !== 0) {
+              K.set(i, j, K.get(i, j) + stiffness[a] * coordinates[a][i] * coordinates[a][j]);
+              M.set(i, j, M.get(i, j) + inertia[a] * coordinates[a][i] * coordinates[a][j]);
+            }
+  }
   progress(0.2);
   const fixed = new Set<number>();
   const sx = Math.round(p.supportX * n),
@@ -51,7 +71,7 @@ export function solvePlate(p: Plate, progress: (v: number) => void = () => {}): 
   for (let y = 0; y <= n; y++)
     for (let x = 0; x <= n; x++) {
       const id = (y * (n + 1) + x) * 4;
-      if (p.boundary === 'center' && x === sx && y === sy)
+      if (p.boundary === 'center' && !attachment && x === sx && y === sy)
         for (let k = 0; k < 4; k++) fixed.add(id + k);
       if (
         (p.boundary === 'clamped' && (x === 0 || y === 0 || x === n || y === n)) ||
@@ -93,10 +113,14 @@ export function solvePlate(p: Plate, progress: (v: number) => void = () => {}): 
     }
   progress(0.4);
   const ev = new EigenvalueDecomposition(A, { assumeSymmetric: true });
+  if (attachment && ev.realEigenvalues.some((v) => !Number.isFinite(v) || v <= 1e-9))
+    throw Error(
+      '연결부 강성 범위에서 해석 행렬이 불안정합니다. 강성 범위를 줄이거나 메시 수렴을 확인하세요.',
+    );
   const physical = solve(L.transpose(), ev.eigenvectorMatrix);
   const order = ev.realEigenvalues
     .map((v, i) => ({ v, i }))
-    .filter((o) => o.v > 1e-3)
+    .filter((o) => o.v > (attachment ? 1e-9 : 1e-3))
     .sort((a, b) => a.v - b.v)
     .slice(0, 24);
   const vectors: number[][] = [],
@@ -130,17 +154,28 @@ export function solvePlate(p: Plate, progress: (v: number) => void = () => {}): 
     residuals.push(Math.sqrt(err / Math.max(1e-30, norm)));
   }
   progress(1);
+  if (attachment && residuals.some((v) => !Number.isFinite(v) || v > 1e-4))
+    throw Error('연결부 모드의 수치 잔차가 큽니다. 강성 대비와 메시를 확인하세요.');
   return {
     source: 'FEM',
     key: plateKey(p),
-    plate: { ...p },
+    plate: structuredClone(p),
     vectors,
     frequencies,
     baseParticipation,
     freeDofs: free.length,
     residuals,
-    mass: p.density * p.width * p.height * p.thickness,
-    support: [sx / n, sy / n],
+    mass: p.density * p.width * p.height * p.thickness + (connection?.mass ?? 0),
+    support: attachment ? [p.supportX, p.supportY] : [sx / n, sy / n],
+    ...(attachment
+      ? {
+          connector: {
+            displacement: vectors.map((v) => dot(v, attachment.displacement)),
+            rotationX: vectors.map((v) => dot(v, attachment.rotationX)),
+            rotationY: vectors.map((v) => dot(v, attachment.rotationY)),
+          },
+        }
+      : {}),
     elapsedMs: performance.now() - start,
   };
 }

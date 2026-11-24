@@ -5,7 +5,10 @@ import {
   applyParticlePreset,
   expectedMass,
   estimateCount,
+  pendingParticles,
 } from '../particles/presets';
+import { contactBudget } from '../simulation/contact';
+import { applyDeviceProfile, createDeviceProfile, DEVICE_PRESETS } from '../experiment/device';
 import type { Experiment } from '../experiment/useExperiment';
 import {
   cloneConfig,
@@ -15,7 +18,7 @@ import {
   sieveGroup,
   MATERIALS,
 } from '../experiment/config';
-import type { Config, ParticleGroup } from '../experiment/types';
+import type { ParticleGroup } from '../experiment/types';
 import { NumberField as N, SelectField as S } from './Fields';
 export function AdvancedSettings({ e }: { e: Experiment }) {
   const c = e.config,
@@ -170,7 +173,7 @@ export function ConfigurationPanel({
   const c = e.config,
     d = c.drive,
     g = c.grains;
-  const edit = (section: keyof Config, key: string, value: unknown) => {
+  const edit = (section: 'plate' | 'drive' | 'grains', key: string, value: unknown) => {
     const n = cloneConfig(c);
     Object.assign(n[section], { [key]: value });
     e.change(n);
@@ -179,6 +182,16 @@ export function ConfigurationPanel({
     const n = cloneConfig(c);
     n.grains.groups = independentGroups(n.grains);
     Object.assign(n.grains.groups[species], patch);
+    const group = n.grains.groups[species];
+    group.pending = group.pending?.filter((k) => patch[k] === undefined);
+    if (patch.diameter !== undefined || patch.density !== undefined)
+      group.evidence = {
+        size: group.evidence?.size ?? 'estimated',
+        density: group.evidence?.density ?? 'estimated',
+        reference: group.evidence?.reference ?? '',
+        ...(patch.diameter !== undefined ? { size: 'estimated' as const } : {}),
+        ...(patch.density !== undefined ? { density: 'estimated' as const } : {}),
+      };
     if (patch.diameter !== undefined || patch.spread !== undefined)
       n.grains.groups[species].sieve = 'custom';
     e.change(n);
@@ -195,6 +208,38 @@ export function ConfigurationPanel({
         <li aria-current={e.run ? 'step' : undefined}>3 입자 실험</li>
       </ol>
       <div className="config-scroll">
+        <label className="profile-selector">
+          장치 프로필
+          <select
+            aria-label="실험 장치 프로필"
+            value={c.device?.id ?? 'ideal'}
+            onChange={(ev) =>
+              e.change(
+                applyDeviceProfile(
+                  c,
+                  c.deviceLibrary?.find((p) => p.id === ev.target.value) ??
+                    createDeviceProfile(ev.target.value, c.plate),
+                ),
+              )
+            }
+          >
+            {DEVICE_PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+            {c.device && !DEVICE_PRESETS.some((p) => p.id === c.device!.id) && (
+              <option value={c.device.id}>{c.device.name}</option>
+            )}
+          </select>
+          <small>
+            {c.plate.connection
+              ? '유연 연결부 FEM'
+              : c.device?.kind === 'as-built'
+                ? '실물 연결부 미보정 · 이상 고정 기준'
+                : '이상 고정 FEM 기준'}
+          </small>
+        </label>
         <section className="frequency-section">
           <label className="frequency-input">
             구동 주파수
@@ -264,7 +309,10 @@ export function ConfigurationPanel({
         <div className="section-heading">
           <h3>혼합 입자</h3>
           <span>
-            {g.count.toLocaleString()}개 · 약 {(expectedMass(g) * g.count * 1000).toFixed(2)} g
+            {g.count.toLocaleString()}개 ·{' '}
+            {Number.isFinite(expectedMass(g))
+              ? `약 ${(expectedMass(g) * g.count * 1000).toFixed(2)} g`
+              : '질량 미확정'}
           </span>
         </div>
         <S
@@ -313,6 +361,7 @@ export function ConfigurationPanel({
                   <N
                     label={`${name} 평균 입경`}
                     value={group.diameter * 1e6}
+                    pending={group.pending?.includes('diameter')}
                     unit="µm"
                     onChange={(v) => groupEdit(id, { diameter: v / 1e6 })}
                   />
@@ -324,7 +373,7 @@ export function ConfigurationPanel({
                     onChange={(v) => groupEdit(id, { spread: v / 100 })}
                   />
                 </div>
-                <details>
+                <details open={group.pending?.includes('density') || undefined}>
                   <summary>체 구간·밀도·마찰</summary>{' '}
                   <S
                     label={`${name} 체 구간`}
@@ -350,6 +399,7 @@ export function ConfigurationPanel({
                   <N
                     label={`${name} 밀도`}
                     value={group.density}
+                    pending={group.pending?.includes('density')}
                     unit="kg/m³"
                     onChange={(v) => groupEdit(id, { density: v })}
                   />
@@ -367,6 +417,51 @@ export function ConfigurationPanel({
                       onChange={(v) => groupEdit(id, { shape: v })}
                     />
                   </div>
+                  {g.model === 'contact' && (
+                    <N
+                      label={`${name} 반발계수`}
+                      value={group.restitution ?? 0.4}
+                      step={0.05}
+                      onChange={(v) => groupEdit(id, { restitution: v })}
+                    />
+                  )}
+                  <label>
+                    입경·밀도 출처
+                    <select
+                      aria-label={`${name} 물성 출처`}
+                      value={group.evidence?.size ?? 'default'}
+                      onChange={(ev) =>
+                        groupEdit(id, {
+                          evidence: {
+                            size: ev.target.value as 'measured' | 'estimated' | 'default',
+                            density: ev.target.value as 'measured' | 'estimated' | 'default',
+                            reference: group.evidence?.reference ?? '',
+                          },
+                        })
+                      }
+                    >
+                      <option value="default">대표값 · 미보정</option>
+                      <option value="estimated">사용자 추정</option>
+                      <option value="measured">사용자 실측</option>
+                    </select>
+                  </label>
+                  <label>
+                    물성 기록
+                    <input
+                      aria-label={`${name} 물성 기록`}
+                      value={group.evidence?.reference ?? ''}
+                      placeholder="체 선별·밀도 측정 방법"
+                      onChange={(ev) =>
+                        groupEdit(id, {
+                          evidence: {
+                            size: group.evidence?.size ?? 'estimated',
+                            density: group.evidence?.density ?? 'estimated',
+                            reference: ev.target.value,
+                          },
+                        })
+                      }
+                    />
+                  </label>
                 </details>
               </section>
             );
@@ -375,10 +470,13 @@ export function ConfigurationPanel({
           <summary>입자량 · 질량으로 추정</summary>
           <N label="목표 질량" value={targetMass} unit="g" step={0.1} onChange={setTargetMass} />
           <p className="help">
-            예상 {estimateCount(g, targetMass / 1000).toLocaleString()}개 · 구형 체적 근사
+            {Number.isFinite(expectedMass(g))
+              ? `예상 ${estimateCount(g, targetMass / 1000).toLocaleString()}개 · 구형 체적 근사`
+              : '입경·입자 밀도를 먼저 입력하세요.'}
           </p>
           <button
             disabled={
+              !Number.isFinite(expectedMass(g)) ||
               estimateCount(g, targetMass / 1000) < 20 ||
               estimateCount(g, targetMass / 1000) > 50000
             }
@@ -386,7 +484,7 @@ export function ConfigurationPanel({
           >
             예상 입자 수 적용
           </button>
-          <p className="help">계산 한도 50,000개. 혼합 비율은 개수 기준입니다.</p>
+          <p className="help">집단 이동 근사 한도 50,000개 · 구형 등가 질량</p>
         </details>
         <p className="help">
           체 구간은 명목 프리셋입니다. 실제 체눈과 선별 입경은 실험 기록으로 확인하세요.
@@ -402,6 +500,58 @@ export function ConfigurationPanel({
             />
           )}
         </div>
+        {g.kind === 'mixture' && (
+          <S
+            label="혼합 비율 기준"
+            value={g.ratioBasis ?? 'count'}
+            options={[
+              ['count', '개수 비율'],
+              ['mass', '질량 비율'],
+            ]}
+            onChange={(v) => edit('grains', 'ratioBasis', v)}
+          />
+        )}
+        <details className="particle-model">
+          <summary>
+            입자 운동 모델 · {g.model === 'contact' ? '접촉 해석' : '집단 이동 근사'}
+          </summary>
+          <S
+            label="입자 운동 모델"
+            value={g.model ?? 'drift'}
+            options={[
+              ['drift', '가속도 구배 · 집단 이동 근사'],
+              ['contact', '구형 입자 · 도약·마찰·회전'],
+            ]}
+            onChange={(v) => edit('grains', 'model', v)}
+          />
+          {g.model === 'contact' ? (
+            <>
+              <p className="help">
+                비보정 접촉 해석 · 입자 간 충돌·공기 유동 제외. 1주기 32회 적분, 현재 조건 최대{' '}
+                {contactBudget(c).limit.toLocaleString()}개.
+              </p>
+              {g.count > contactBudget(c).limit && (
+                <button
+                  onClick={() => edit('grains', 'count', Math.min(500, contactBudget(c).limit))}
+                >
+                  접촉 해석용 {Math.min(500, contactBudget(c).limit)}개로 설정
+                </button>
+              )}
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={!!g.stillAirDrag}
+                  onChange={(ev) => edit('grains', 'stillAirDrag', ev.target.checked)}
+                />
+                정지 공기 Stokes 항력 근사
+              </label>
+            </>
+          ) : (
+            <p className="help">
+              빠른 분포 탐색용 경험적 근사입니다. 반발·입자 간 충돌·역 클라드니를 예측하지 않습니다.
+            </p>
+          )}
+        </details>
         <details>
           <summary>초기 배치·반복 조건</summary>
           <N label="랜덤 시드" value={g.seed} onChange={(v) => edit('grains', 'seed', v)} />
@@ -431,12 +581,21 @@ export function ConfigurationPanel({
           </button>
           <button
             className="primary"
-            disabled={!e.field || !e.modal || e.busy}
+            disabled={
+              !e.field ||
+              !e.modal ||
+              e.busy ||
+              pendingParticles(g) ||
+              (g.model === 'contact' && g.count > contactBudget(c).limit)
+            }
             onClick={e.simulate}
           >
             입자 실험
           </button>
         </div>
+        {pendingParticles(g) && (
+          <p className="error">입경·입자 밀도를 입력해야 실행할 수 있습니다.</p>
+        )}
         <div className="compute-status" role="status">
           {e.status}
           {e.busy && ` · ${Math.round(e.progress * 100)}%`}

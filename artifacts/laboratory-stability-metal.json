@@ -1,0 +1,69 @@
+{
+  "date": "2026-11-24",
+  "browser": "153.0.8010.12",
+  "scope": "Six 8-second recorded runs replayed for 60 seconds; short stability smoke, not long-term/thermal certification",
+  "samples": [
+    {
+      "cycle": 0,
+      "elapsedMs": 10016.2,
+      "averageFPS": 60.002795471336434,
+      "mainJSHeapBytes": 64493740,
+      "physicalCount": "20000",
+      "canvasCount": 1,
+      "modalSolves": "1",
+      "time": "8.00 / 8.0 s"
+    },
+    {
+      "cycle": 1,
+      "elapsedMs": 10016.300000000001,
+      "averageFPS": 60.00219641983566,
+      "mainJSHeapBytes": 63173608,
+      "physicalCount": "20000",
+      "canvasCount": 1,
+      "modalSolves": "1",
+      "time": "8.00 / 8.0 s"
+    },
+    {
+      "cycle": 2,
+      "elapsedMs": 10016.199999999997,
+      "averageFPS": 60.002795471336455,
+      "mainJSHeapBytes": 63512736,
+      "physicalCount": "20000",
+      "canvasCount": 1,
+      "modalSolves": "1",
+      "time": "8.00 / 8.0 s"
+    },
+    {
+      "cycle": 3,
+      "elapsedMs": 10016.300000000003,
+      "averageFPS": 60.00219641983565,
+      "mainJSHeapBytes": 63538352,
+      "physicalCount": "20000",
+      "canvasCount": 1,
+      "modalSolves": "1",
+      "time": "8.00 / 8.0 s"
+    },
+    {
+      "cycle": 4,
+      "elapsedMs": 10016.200000000004,
+      "averageFPS": 60.002795471336405,
+      "mainJSHeapBytes": 63541716,
+      "physicalCount": "20000",
+      "canvasCount": 1,
+      "modalSolves": "1",
+      "time": "8.00 / 8.0 s"
+    },
+    {
+      "cycle": 5,
+      "elapsedMs": 10016.299999999996,
+      "averageFPS": 60.00219641983569,
+      "mainJSHeapBytes": 63543212,
+      "physicalCount": "20000",
+      "canvasCount": 1,
+      "modalSolves": "1",
+      "time": "8.00 / 8.0 s"
+    }
+  ],
+  "errors": [],
+  "success": true
+}

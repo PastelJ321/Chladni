@@ -1,5 +1,6 @@
 import { defineConfig } from '@playwright/test';
-const production = process.env.CHLADNI_TEST_PRODUCTION === '1';
+// Offline checks require the built app; use 0 only for deliberate dev-server iteration.
+const production = process.env.CHLADNI_TEST_PRODUCTION !== '0';
 const port = production ? 4173 : 5173;
 
 export default defineConfig({

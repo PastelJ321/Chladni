@@ -7,6 +7,7 @@ export function NumberField({
   step = 1,
   min,
   max,
+  pending = false,
 }: {
   label: string;
   value: number;
@@ -15,13 +16,14 @@ export function NumberField({
   step?: number;
   min?: number;
   max?: number;
+  pending?: boolean;
 }) {
-  const [text, setText] = useState(String(+value.toPrecision(8)));
-  useEffect(() => setText(String(+value.toPrecision(8))), [value]);
+  const [text, setText] = useState(pending ? '' : String(+value.toPrecision(8)));
+  useEffect(() => setText(pending ? '' : String(+value.toPrecision(8))), [value, pending]);
   const commit = () => {
     const n = Number(text);
-    if (text.trim() && Number.isFinite(n) && n !== +value.toPrecision(8)) onChange(n);
-    setText(String(+value.toPrecision(8)));
+    if (text.trim() && Number.isFinite(n) && (pending || n !== +value.toPrecision(8))) onChange(n);
+    if (!pending) setText(String(+value.toPrecision(8)));
   };
   return (
     <label className="number-field">
@@ -30,6 +32,7 @@ export function NumberField({
         <input
           aria-label={label}
           type="number"
+          placeholder={pending ? '입력 필요' : undefined}
           value={text}
           step={step}
           min={min}

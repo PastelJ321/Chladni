@@ -57,6 +57,18 @@ export const PARTICLE_PRESETS: Record<
     kind: 2,
     source: '자당 대표 밀도 · 마찰/형태 비보정',
   },
+  tea: {
+    label: '녹차분말',
+    density: 1000,
+    diameter: 100e-6,
+    spread: 0.5,
+    friction: 0.5,
+    shape: 1.8,
+    color: '#657748',
+    roughness: 0.96,
+    kind: 5,
+    source: '입경·입자 밀도 미제공 · 입력 전 계산 불가 · 벌크 밀도와 입자 밀도를 구분하세요',
+  },
   glass: {
     label: '유리 비즈',
     density: 2500,
@@ -95,6 +107,9 @@ export function applyParticlePreset(id: ParticleMaterialId): ParticleGroup {
     friction: p.friction,
     shape: p.shape,
     sieve: 'custom',
+    ...(id === 'tea' ? { pending: ['diameter', 'density'] as ('diameter' | 'density')[] } : {}),
+    evidence: { size: 'default', density: 'default', reference: p.source },
+    restitution: 0.4,
   };
 }
 export function physicalProperties(
@@ -122,13 +137,31 @@ export const DEFAULT_PARTICLE_VISUAL: ParticleVisualProperties = {
 };
 /** E[d³] for a uniform diameter distribution; ratio is a number fraction, never mass fraction. */
 export function expectedMass(g: Grains) {
+  if (pendingParticles(g)) return NaN;
   const mean = (slot: 0 | 1) => {
     const p = particleGroup(g, slot);
     return ((p.density * Math.PI) / 6) * p.diameter ** 3 * (1 + p.spread ** 2);
   };
+  const ratio = numberRatio(g);
   return g.kind === 'mixture'
-    ? mean(0) * (1 - g.ratio) + mean(1) * g.ratio
+    ? mean(0) * (1 - ratio) + mean(1) * ratio
     : mean(g.kind === 'salt' ? 1 : 0);
+}
+export function pendingParticles(g: Grains) {
+  return (g.kind === 'salt' ? [1] : g.kind === 'sand' ? [0] : [0, 1]).some(
+    (s) => particleGroup(g, s as 0 | 1).pending?.length,
+  );
+}
+export function numberRatio(g: Grains) {
+  if (g.ratioBasis !== 'mass') return g.ratio;
+  const mass = (s: 0 | 1) => {
+    const p = particleGroup(g, s);
+    return p.density * p.diameter ** 3 * (1 + p.spread ** 2);
+  };
+  const a = mass(0),
+    b = mass(1),
+    den = g.ratio * a + (1 - g.ratio) * b;
+  return den > 0 ? (g.ratio * a) / den : 0;
 }
 export function estimateCount(g: Grains, massKg: number) {
   return Math.round(massKg / expectedMass(g));
