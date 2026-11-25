@@ -12,7 +12,8 @@
     "format": "prettier --write src tests *.ts *.json index.html docs README.md",
     "benchmark": "node scripts/benchmark.mjs",
     "test:stability": "node scripts/stability.mjs",
-    "test:firefox": "node --import tsx scripts/firefox-smoke.mjs"
+    "test:firefox": "node --import tsx scripts/firefox-smoke.mjs",
+    "deploy:pages": "node scripts/deploy-pages.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
