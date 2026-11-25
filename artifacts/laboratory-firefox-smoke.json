@@ -1,0 +1,9 @@
+{
+  "date": "2026-11-24",
+  "browser": "159.0",
+  "scope": "Firefox desktop native WebGL initialization, worker solve, particle playback, analysis, device clipping, resize and JSON export smoke",
+  "errors": [],
+  "exportName": "chladni-session.json",
+  "physicalCount": "1000",
+  "success": true
+}

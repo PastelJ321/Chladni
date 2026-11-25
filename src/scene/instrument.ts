@@ -1,191 +1,267 @@
-import * as THREE from 'three';
+import { createPlateGeometry } from './plateGeometry';
+import * as T from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import type { PartId } from '../model/catalog';
-import { createMaterials } from './materials';
-
-export const PLATE_Y = 2.24;
-export const HALF_PLATE = 1.8;
-
-export function createInstrument(materials: ReturnType<typeof createMaterials>) {
-  const root = new THREE.Group();
+import type { createMaterials } from './materials';
+import { PART_SPECS, type InstrumentPartId } from './parts';
+export const PLATE_Y = 2.24,
+  HALF_PLATE = 1.8;
+export function createInstrument(
+  materials: ReturnType<typeof createMaterials>,
+  construction: 'adhesive' | 'bolted' = 'bolted',
+) {
+  const root = new T.Group();
+  root.name = `chladni-${construction}-schematic`;
   const parts = Object.fromEntries(
-    ['plate', 'bolt', 'coupler', 'speaker', 'support', 'particles'].map((id) => {
-      const group = new THREE.Group();
-      group.name = id;
-      group.userData.part = id;
-      root.add(group);
-      return [id, group];
+    PART_SPECS.map((p) => {
+      const g = new T.Group();
+      g.name = p.id;
+      g.userData = { part: p.id, source: p.source };
+      return [p.id, g];
     }),
-  ) as Record<PartId, THREE.Group>;
-  const originals = new Map<THREE.MeshStandardMaterial, { opacity: number; color: THREE.Color }>();
-
-  function mesh(
-    geometry: THREE.BufferGeometry,
-    material: THREE.MeshStandardMaterial,
-    part: PartId,
-    x: number,
-    y: number,
-    z: number,
-  ) {
-    const localMaterial = material.clone();
-    const object = new THREE.Mesh(geometry, localMaterial);
-    object.position.set(x, y, z);
-    object.castShadow = true;
-    object.receiveShadow = true;
-    object.userData.part = part;
-    parts[part].add(object);
-    originals.set(localMaterial, { opacity: 1, color: material.color.clone() });
-    return object;
+  ) as Record<InstrumentPartId, T.Group>;
+  for (const spec of PART_SPECS) {
+    if (['frame', 'magnet', 'coil', 'cone', 'surround'].includes(spec.id))
+      parts.speaker.add(parts[spec.id]);
+    else root.add(parts[spec.id]);
   }
-  const cylinder = (
+  const originals = new Map<T.MeshStandardMaterial, { opacity: number; color: T.Color }>();
+  function mesh(
+    geometry: T.BufferGeometry,
+    material: T.MeshStandardMaterial,
+    id: InstrumentPartId,
+    x = 0,
+    y = 0,
+    z = 0,
+  ) {
+    const mat = material.clone(),
+      o = new T.Mesh(geometry, mat);
+    o.position.set(x, y, z);
+    o.castShadow = true;
+    o.receiveShadow = true;
+    o.userData.part = id;
+    parts[id].add(o);
+    originals.set(mat, { opacity: 1, color: mat.color.clone() });
+    return o;
+  }
+  function cylinder(
     rt: number,
     rb: number,
     h: number,
-    mat: THREE.MeshStandardMaterial,
-    part: PartId,
+    mat: T.MeshStandardMaterial,
+    id: InstrumentPartId,
     y: number,
     x = 0,
     z = 0,
     sides = 64,
-  ) => mesh(new THREE.CylinderGeometry(rt, rb, h, sides), mat, part, x, y, z);
-  const box = (
+  ) {
+    return mesh(new T.CylinderGeometry(rt, rb, h, sides), mat, id, x, y, z);
+  }
+  function box(
     w: number,
     h: number,
     d: number,
-    mat: THREE.MeshStandardMaterial,
-    part: PartId,
+    mat: T.MeshStandardMaterial,
+    id: InstrumentPartId,
     x: number,
     y: number,
     z: number,
-    radius = 0.025,
-  ) => mesh(new RoundedBoxGeometry(w, h, d, 3, radius), mat, part, x, y, z);
-  const torus = (
+    r = 0.02,
+  ) {
+    return mesh(new RoundedBoxGeometry(w, h, d, 3, r), mat, id, x, y, z);
+  }
+  function ring(
     radius: number,
     tube: number,
-    mat: THREE.MeshStandardMaterial,
-    part: PartId,
+    mat: T.MeshStandardMaterial,
+    id: InstrumentPartId,
     y: number,
-  ) => {
-    const object = mesh(new THREE.TorusGeometry(radius, tube, 12, 80), mat, part, 0, y, 0);
-    object.rotation.x = Math.PI / 2;
-    return object;
-  };
-
-  // The stationary frame supports the driver only; nothing touches the free plate edges.
-  box(2.25, 0.12, 2.05, materials.darkMetal, 'support', 0, 0.21, 0, 0.07);
+  ) {
+    const o = mesh(new T.TorusGeometry(radius, tube, 10, 80), mat, id, 0, y);
+    o.rotation.x = Math.PI / 2;
+    return o;
+  }
+  function annulus(
+    inner: number,
+    outer: number,
+    height: number,
+    mat: T.MeshStandardMaterial,
+    id: InstrumentPartId,
+    y: number,
+  ) {
+    const bevel = Math.min(0.003, height * 0.2),
+      p = [
+        [inner, -height / 2],
+        [outer - bevel, -height / 2],
+        [outer, -height / 2 + bevel],
+        [outer, height / 2 - bevel],
+        [outer - bevel, height / 2],
+        [inner, height / 2],
+        [inner, -height / 2],
+      ].map((v) => new T.Vector2(...(v as [number, number])));
+    return mesh(new T.LatheGeometry(p, 80), mat, id, 0, y);
+  }
+  box(2.25, 0.12, 2.05, materials.darkMetal, 'support', 0, 0.21, 0, 0.035);
+  box(2.18, 0.025, 1.98, materials.black, 'support', 0, 0.281, 0, 0.02);
   for (const x of [-0.87, 0.87])
     for (const z of [-0.77, 0.77]) {
-      cylinder(0.16, 0.18, 0.15, materials.rubber, 'support', 0.075, x, z);
-      cylinder(0.06, 0.06, 0.035, materials.steel, 'support', 0.283, x, z, 6);
+      cylinder(0.15, 0.17, 0.15, materials.rubber, 'support', 0.075, x, z);
+      cylinder(0.047, 0.047, 0.025, materials.steel, 'support', 0.282, x, z, 6);
     }
-  cylinder(0.53, 0.53, 0.09, materials.steel, 'speaker', 0.34);
-  cylinder(0.5, 0.5, 0.32, materials.ceramic, 'speaker', 0.54);
-  const topPole = [
-    new THREE.Vector2(0.24, -0.1),
-    new THREE.Vector2(0.52, -0.1),
-    new THREE.Vector2(0.52, 0.1),
-    new THREE.Vector2(0.24, 0.1),
-    new THREE.Vector2(0.24, -0.1),
-  ];
-  mesh(new THREE.LatheGeometry(topPole, 64), materials.steel, 'speaker', 0, 0.8, 0);
-  // Fixed pole, annular air gap, and the copper voice-coil carried by the moving cone.
-  cylinder(0.19, 0.19, 0.35, materials.steel, 'speaker', 0.77);
+  annulus(0.12, 0.53, 0.08, materials.steel, 'magnet', 0.34);
+  ring(0.51, 0.009, materials.steel, 'magnet', 0.385);
+  cylinder(0.5, 0.5, 0.32, materials.ceramic, 'magnet', 0.54);
+  annulus(0.24, 0.52, 0.18, materials.steel, 'magnet', 0.79);
+  cylinder(0.19, 0.19, 0.35, materials.steel, 'magnet', 0.77);
+  mesh(new T.CylinderGeometry(0.215, 0.215, 0.18, 80, 1, true), materials.copper, 'coil', 0, 0.86);
+  mesh(new T.CylinderGeometry(0.207, 0.207, 0.29, 80, 1, true), materials.black, 'coil', 0, 1.015);
+  const windings = [];
+  for (let i = 0; i <= 640; i++) {
+    const a = (i / 640) * Math.PI * 28;
+    windings.push(new T.Vector3(Math.cos(a) * 0.218, 0.78 + (i / 640) * 0.17, Math.sin(a) * 0.218));
+  }
   mesh(
-    new THREE.CylinderGeometry(0.217, 0.217, 0.18, 64, 1, true),
+    new T.TubeGeometry(new T.CatmullRomCurve3(windings), 640, 0.0035, 5, false),
     materials.copper,
-    'speaker',
-    0,
-    0.86,
-    0,
+    'coil',
   );
-  for (let i = 0; i < 14; i++) torus(0.218, 0.004, materials.copper, 'speaker', 0.78 + i * 0.012);
+  annulus(0.65, 0.82, 0.045, materials.darkMetal, 'frame', 1.19);
+  ring(0.79, 0.008, materials.steel, 'frame', 1.216);
+  ring(0.67, 0.058, materials.rubber, 'surround', 1.225);
+  ring(0.59, 0.018, materials.rubber, 'surround', 1.207);
   mesh(
-    new THREE.CylinderGeometry(0.208, 0.208, 0.3, 64, 1, true),
-    materials.black,
-    'speaker',
-    0,
-    1.01,
-    0,
+    new T.LatheGeometry(
+      [
+        [0.205, 0.99],
+        [0.25, 1.04],
+        [0.39, 1.13],
+        [0.53, 1.19],
+        [0.61, 1.205],
+        [0.61, 1.213],
+        [0.53, 1.198],
+        [0.39, 1.138],
+        [0.25, 1.048],
+        [0.205, 0.998],
+        [0.205, 0.99],
+      ].map((v) => new T.Vector2(...(v as [number, number]))),
+      96,
+    ),
+    materials.cone,
+    'cone',
   );
-  torus(0.75, 0.048, materials.darkMetal, 'speaker', 1.19);
-  torus(0.67, 0.065, materials.rubber, 'speaker', 1.23);
-  torus(0.57, 0.023, materials.rubber, 'speaker', 1.205);
-  const conePoints = [
-    new THREE.Vector2(0.2, 0.99),
-    new THREE.Vector2(0.24, 1.025),
-    new THREE.Vector2(0.52, 1.18),
-    new THREE.Vector2(0.61, 1.2),
-  ];
-  mesh(new THREE.LatheGeometry(conePoints, 80), materials.cone, 'speaker', 0, 0, 0);
   for (let i = 0; i < 8; i++) {
-    const angle = (i * Math.PI) / 4;
-    const rib = box(
-      0.095,
-      0.63,
-      0.065,
-      materials.darkMetal,
-      'speaker',
-      Math.sin(angle) * 0.6,
-      0.93,
-      Math.cos(angle) * 0.6,
-    );
-    rib.rotation.set(Math.cos(angle) * -0.47, 0, Math.sin(angle) * 0.47);
+    const a = (i * Math.PI) / 4,
+      lower = new T.Vector3(Math.sin(a) * 0.46, 0.68, Math.cos(a) * 0.46),
+      upper = new T.Vector3(Math.sin(a) * 0.735, 1.19, Math.cos(a) * 0.735),
+      center = lower.clone().add(upper).multiplyScalar(0.5),
+      rib = box(
+        0.074,
+        lower.distanceTo(upper),
+        0.055,
+        materials.darkMetal,
+        'frame',
+        center.x,
+        center.y,
+        center.z,
+        0.008,
+      );
+    rib.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), upper.sub(lower).normalize());
     cylinder(
-      0.034,
-      0.034,
-      0.025,
+      0.027,
+      0.027,
+      0.018,
       materials.steel,
-      'speaker',
-      1.25,
-      Math.sin(angle) * 0.75,
-      Math.cos(angle) * 0.75,
+      'frame',
+      1.238,
+      Math.sin(a) * 0.75,
+      Math.cos(a) * 0.75,
       6,
     );
   }
-  // Rigid adapter replaces a decorative dust-cap; it connects to the coil former.
-  cylinder(0.23, 0.2, 0.12, materials.aluminum, 'coupler', 1.16);
-  cylinder(0.11, 0.16, 0.15, materials.aluminum, 'coupler', 1.295);
-  cylinder(0.068, 0.068, 0.82, materials.steel, 'coupler', 1.77);
-  cylinder(0.15, 0.15, 0.09, materials.steel, 'coupler', 2.195);
-  for (let i = 0; i < 12; i++) torus(0.072, 0.006, materials.steel, 'coupler', 2.02 + i * 0.013);
-
-  // Finely tessellated solid plate with a center aperture under the washer.
-  const plateGeometry = new THREE.BoxGeometry(3.6, 0.024, 3.6, 82, 1, 82);
-  const indices = plateGeometry.index!;
-  const vertices = plateGeometry.attributes.position;
-  const filtered: number[] = [];
-  for (let i = 0; i < indices.count; i += 3) {
-    const ids = [indices.getX(i), indices.getX(i + 1), indices.getX(i + 2)];
-    const x = ids.reduce((sum, id) => sum + vertices.getX(id), 0) / 3;
-    const z = ids.reduce((sum, id) => sum + vertices.getZ(id), 0) / 3;
-    if (Math.hypot(x, z) > 0.054) filtered.push(...ids);
+  if (construction === 'bolted') {
+    cylinder(0.23, 0.2, 0.12, materials.aluminum, 'coupler', 1.16);
+    cylinder(0.09, 0.16, 0.15, materials.aluminum, 'coupler', 1.295);
+    cylinder(0.036, 0.036, 0.82, materials.steel, 'coupler', 1.77);
+    annulus(0.035, 0.13, 0.046, materials.steel, 'coupler', 2.195);
+    for (let i = 0; i < 5; i++) ring(0.038, 0.002, materials.steel, 'coupler', 2.105 + i * 0.012);
+  } else {
+    box(0.31, 0.93, 0.31, materials.foam, 'coupler', 0, 1.74, 0, 0.018);
+    box(0.53, 0.045, 0.53, materials.tape, 'coupler', 0, PLATE_Y - 0.037, 0, 0.008);
+    for (const z of [-0.17, 0.17])
+      box(0.39, 0.018, 0.065, materials.tape, 'coupler', 0, 1.29, z, 0.005);
+    for (const x of [-0.163, 0.163])
+      box(0.018, 0.22, 0.2, materials.tape, 'coupler', x, 1.43, 0, 0.004);
   }
-  plateGeometry.setIndex(filtered);
-  const plate = mesh(plateGeometry, materials.aluminum, 'plate', 0, PLATE_Y, 0);
-  const restPositions = Float32Array.from(plate.geometry.attributes.position.array);
-  cylinder(0.15, 0.15, 0.017, materials.steel, 'bolt', PLATE_Y + 0.023);
-  cylinder(0.105, 0.105, 0.075, materials.steel, 'bolt', PLATE_Y + 0.062, 0, 0, 6);
-  cylinder(0.052, 0.052, 0.017, materials.darkMetal, 'bolt', PLATE_Y + 0.108, 0, 0, 6);
-
-  // Two insulated terminals and a cable on the stationary side of the driver.
+  const plateGeometry = createPlateGeometry(3.6, 3.6, 0.024, construction === 'bolted' ? 0.046 : 0);
+  const plate = mesh(plateGeometry, materials.aluminum, 'plate', 0, PLATE_Y),
+    restPositions = Float32Array.from(plateGeometry.attributes.position.array);
+  if (construction === 'bolted') {
+    annulus(0.042, 0.13, 0.01, materials.steel, 'washerBottom', PLATE_Y - 0.017);
+    annulus(0.042, 0.13, 0.018, materials.steel, 'washerTop', PLATE_Y + 0.021);
+    cylinder(0.036, 0.036, 0.14, materials.steel, 'bolt', 2.203);
+    const headShape = new T.Shape(),
+      socket = new T.Path();
+    for (let i = 0; i <= 6; i++) {
+      const a = (i * Math.PI) / 3,
+        x = Math.cos(a) * 0.075,
+        y = Math.sin(a) * 0.075;
+      i ? headShape.lineTo(x, y) : headShape.moveTo(x, y);
+    }
+    for (let i = 0; i <= 6; i++) {
+      const a = (-i * Math.PI) / 3,
+        x = Math.cos(a) * 0.027,
+        y = Math.sin(a) * 0.027;
+      i ? socket.lineTo(x, y) : socket.moveTo(x, y);
+    }
+    headShape.holes.push(socket);
+    const head = mesh(
+      new T.ExtrudeGeometry(headShape, {
+        depth: 0.045,
+        steps: 1,
+        bevelEnabled: true,
+        bevelSize: 0.003,
+        bevelThickness: 0.005,
+        bevelSegments: 2,
+        curveSegments: 1,
+      }),
+      materials.steel,
+      'bolt',
+      0,
+      2.275,
+    );
+    head.rotation.x = -Math.PI / 2;
+    const thread = [];
+    for (let i = 0; i <= 240; i++) {
+      const a = (i / 240) * Math.PI * 20;
+      thread.push(new T.Vector3(0.038 * Math.cos(a), 2.14 + (i / 240) * 0.13, 0.038 * Math.sin(a)));
+    }
+    mesh(
+      new T.TubeGeometry(new T.CatmullRomCurve3(thread), 240, 0.004, 5, false),
+      materials.steel,
+      'bolt',
+    );
+  }
   for (const x of [-0.15, 0.15]) {
-    box(0.09, 0.12, 0.08, materials.black, 'speaker', x, 0.69, 0.52);
-    cylinder(0.028, 0.028, 0.06, materials.copper, 'speaker', 0.78, x, 0.52, 12);
+    box(0.075, 0.1, 0.08, materials.black, 'frame', x, 0.68, 0.52);
+    cylinder(0.023, 0.023, 0.04, materials.copper, 'frame', 0.75, x, 0.52, 12);
   }
-  const cablePath = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(0.15, 0.75, 0.54),
-    new THREE.Vector3(0.22, 0.4, 0.8),
-    new THREE.Vector3(0.65, 0.28, 1.04),
-    new THREE.Vector3(1.8, 0.05, 1.25),
-    new THREE.Vector3(2.7, 0.05, 1.05),
-  ]);
-  mesh(
-    new THREE.TubeGeometry(cablePath, 48, 0.018, 8, false),
+  const cable = new T.CatmullRomCurve3(
+    [
+      [0.15, 0.75, 0.54],
+      [0.25, 0.4, 0.8],
+      [0.65, 0.29, 1.04],
+      [1.8, 0.045, 1.25],
+      [2.7, 0.045, 1.05],
+    ].map((v) => new T.Vector3(...(v as [number, number, number]))),
+  );
+  mesh(new T.TubeGeometry(cable, 60, 0.014, 8, false), materials.rubber, 'support');
+  const relief = mesh(
+    new T.CylinderGeometry(0.028, 0.037, 0.14, 24),
     materials.rubber,
     'support',
-    0,
-    0,
-    0,
+    0.18,
+    0.72,
+    0.565,
   );
+  relief.rotation.x = Math.PI * 0.38;
   return { root, parts, plate, restPositions, originals };
 }
