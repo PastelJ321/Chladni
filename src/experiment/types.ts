@@ -225,7 +225,7 @@ export interface ViewSettings {
   showMode: boolean;
   particles: boolean;
   selected: string | null;
-  quality: 'standard' | 'low';
+  quality: 'high' | 'standard' | 'low';
   phase: number;
   particleVisual?: ParticleVisualProperties;
 }

@@ -442,7 +442,7 @@ export default function App() {
     <div className={`focused-lab ${clean ? 'is-clean' : ''} ${!panel ? 'panel-hidden' : ''}`}>
       <header className="app-header">
         <div className="wordmark">
-          Chladni<small>by QuadraJ</small>
+          Chladni<small>QuadraJ</small>
         </div>
         <nav aria-label="작업 공간">
           {spaces.map((s) => (
@@ -465,7 +465,9 @@ export default function App() {
           >
             실험 기록
           </button>
-          <button onClick={() => setDirectorOpen(!directorOpen)}>장면 연출</button>
+          <button aria-pressed={directorOpen} onClick={() => setDirectorOpen(!directorOpen)}>
+            장면 연출
+          </button>
           <details className="export-menu">
             <summary>
               저장·도구 <ChevronDown size={13} />
@@ -513,6 +515,14 @@ export default function App() {
               <button onClick={() => void enterPresentation()}>발표 화면</button>
               <button onClick={() => void localSave()}>이 기기에 보관</button>
               <button onClick={() => void localLoad()}>기기 기록 불러오기</button>
+              <div className="menu-divider" />
+              <button
+                onClick={() =>
+                  setView((v) => ({ ...v, quality: v.quality === 'high' ? 'standard' : 'high' }))
+                }
+              >
+                {view.quality === 'high' ? '균형 화질로 (Balanced)' : '고화질 표시 (High)'}
+              </button>
               <button
                 onClick={() =>
                   setView((v) => ({ ...v, quality: v.quality === 'low' ? 'standard' : 'low' }))
@@ -769,6 +779,7 @@ export default function App() {
                 {(['hero', 'top', 'macro'] as const).map((id, i) => (
                   <button
                     key={id}
+                    aria-pressed={view.camera === id}
                     onClick={() => {
                       film.director.interrupt();
                       setView((v) => ({

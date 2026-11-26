@@ -1,6 +1,7 @@
 import * as T from 'three';
 import type { Field, Layer } from '../experiment/types';
 import { densityGrid } from '../analysis/metrics';
+
 /** Shared physical field texture: plate + particle shaders sample the same complex displacement. */
 export class PlateField {
   array = new Float32Array(41 * 41 * 4);
@@ -23,6 +24,7 @@ export class PlateField {
   densitySource: unknown = null;
   densityCache = new WeakMap<object, Float32Array>();
   uploads = 0;
+
   constructor() {
     for (const t of [this.texture, this.densityTexture]) {
       t.minFilter = T.NearestFilter;
@@ -31,6 +33,7 @@ export class PlateField {
       t.needsUpdate = true;
     }
   }
+
   update(f: Field | null, phase: number, gain: number, layer: Layer) {
     if (f !== this.field) {
       if (f && f.size !== this.texture.image.width) {
@@ -65,6 +68,7 @@ export class PlateField {
             ? 3
             : 0;
   }
+
   updateDensity(positions: ArrayLike<number>, source: unknown) {
     if (source === this.densitySource) return;
     let density = this.densityCache.get(source as object);
@@ -78,6 +82,7 @@ export class PlateField {
     this.densityTexture.needsUpdate = true;
     this.densitySource = source;
   }
+
   attach(material: T.Material, depth = false) {
     material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, this.uniforms);
@@ -92,16 +97,70 @@ export class PlateField {
         `#include <begin_vertex>\nvPlateUV=position.xz/3.6+0.5;transformed.y=position.y*uThickness+plateLift(vPlateUV);`,
       );
       if (!depth) {
-        shader.fragmentShader = FIELD_GLSL + '\nvarying vec2 vPlateUV;\n' + shader.fragmentShader;
+        shader.fragmentShader =
+          FIELD_GLSL +
+          `
+varying vec2 vPlateUV;
+float densitySample(vec2 uv){
+  vec2 p=clamp(uv,0.0,1.0)*15.0;
+  vec2 a=floor(p),t=fract(p);
+  float h=1.0/16.0;
+  vec2 q=(a+0.5)*h;
+  float c00=texture2D(uDensity,q).r;
+  float c10=texture2D(uDensity,q+vec2(h,0.0)).r;
+  float c01=texture2D(uDensity,q+vec2(0.0,h)).r;
+  float c11=texture2D(uDensity,q+vec2(h,h)).r;
+  return mix(mix(c00,c10,t.x),mix(c01,c11,t.x),t.y);
+}
+vec3 amplitudeRamp(float v){
+  float t=clamp(v,0.0,1.0);
+  vec3 c0=vec3(0.025,0.085,0.145);
+  vec3 c1=vec3(0.055,0.255,0.345);
+  vec3 c2=vec3(0.165,0.565,0.645);
+  vec3 c3=vec3(0.765,0.525,0.225);
+  vec3 c4=vec3(0.955,0.855,0.635);
+  if(t<0.28) return mix(c0,c1,t/0.28);
+  if(t<0.58) return mix(c1,c2,(t-0.28)/0.30);
+  if(t<0.84) return mix(c2,c3,(t-0.58)/0.26);
+  return mix(c3,c4,(t-0.84)/0.16);
+}
+vec3 divergingRamp(float s){
+  float t=clamp(s,-1.0,1.0);
+  vec3 neg=vec3(0.155,0.545,0.695);
+  vec3 mid=vec3(0.082,0.148,0.205);
+  vec3 pos=vec3(0.815,0.545,0.235);
+  vec3 col=t<0.0?mix(mid,neg,-t):mix(mid,pos,t);
+  float nodeBand=1.0-smoothstep(0.0,0.032,abs(t));
+  return mix(col,vec3(0.68,0.81,0.86),nodeBand*0.35);
+}
+vec3 densityRamp(float v){
+  float t=pow(clamp(v,0.0,1.0),0.88);
+  vec3 c0=vec3(0.022,0.082,0.135);
+  vec3 c1=vec3(0.065,0.255,0.345);
+  vec3 c2=vec3(0.22,0.565,0.635);
+  vec3 c3=vec3(0.86,0.66,0.34);
+  if(t<0.36) return mix(c0,c1,t/0.36);
+  if(t<0.74) return mix(c1,c2,(t-0.36)/0.38);
+  return mix(c2,c3,(t-0.74)/0.26);
+}
+` +
+          shader.fragmentShader;
         shader.fragmentShader = shader.fragmentShader.replace(
           '#include <color_fragment>',
-          `#include <color_fragment>\nif(uLayer>0.5){vec4 f=fieldSample(vPlateUV);float value=uLayer<1.5?f.z/uPeak:uLayer<2.5?0.5+0.5*(f.x*cos(uPhase)-f.y*sin(uPhase))/uPeak:texture2D(uDensity,clamp(vPlateUV,0.0,1.0)).r;diffuseColor.rgb=mix(vec3(0.075,0.18,0.24),vec3(0.71,0.48,0.19),clamp(value,0.0,1.0));}`,
+          `#include <color_fragment>
+if(uLayer>0.5){
+  vec4 f=fieldSample(vPlateUV);
+  if(uLayer<1.5) diffuseColor.rgb=amplitudeRamp(f.z/uPeak);
+  else if(uLayer<2.5) diffuseColor.rgb=divergingRamp((f.x*cos(uPhase)-f.y*sin(uPhase))/uPeak);
+  else diffuseColor.rgb=densityRamp(densitySample(vPlateUV));
+}`,
         );
       }
     };
-    material.customProgramCacheKey = () => (depth ? 'plate-field-depth-v4' : 'plate-field-v4');
+    material.customProgramCacheKey = () => (depth ? 'plate-field-depth-v5' : 'plate-field-v5');
     material.needsUpdate = true;
   }
+
   attachOverlay(material: T.LineBasicMaterial) {
     material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, this.uniforms);
@@ -111,13 +170,15 @@ export class PlateField {
         '#include <begin_vertex>\ntransformed.y+=plateLift(position.xz/uPlateSize+0.5);',
       );
     };
-    material.customProgramCacheKey = () => 'field-overlay-v4';
+    material.customProgramCacheKey = () => 'field-overlay-v5';
   }
+
   dispose() {
     this.texture.dispose();
     this.densityTexture.dispose();
   }
 }
+
 // Manual bilinear interpolation works on WebGL2 even without float-linear filtering support.
 export const FIELD_GLSL = `
 uniform sampler2D uField;uniform sampler2D uDensity;uniform float uFieldSize;uniform float uPhase;uniform float uGain;uniform float uPeak;uniform float uLayer;uniform float uHasField;uniform float uThickness;

@@ -15,6 +15,7 @@ import { isolines } from './layers';
 import { sampleGrid } from '../solver/response';
 import { pendingParticles } from '../particles/presets';
 import type { LoadedDeviceAsset } from '../scene/deviceAsset';
+
 function hierarchyDepth(node: T.Object3D) {
   let n = 0;
   while (node.parent) {
@@ -23,6 +24,55 @@ function hierarchyDepth(node: T.Object3D) {
   }
   return n;
 }
+
+function createStudioBackdropTexture() {
+  const w = 4,
+    h = 256,
+    data = new Uint8Array(w * h * 4);
+  const top = new T.Color('#061726'),
+    mid = new T.Color('#0a2033'),
+    horizon = new T.Color('#0d293e'),
+    low = new T.Color('#061726');
+  const tmp = new T.Color();
+  for (let y = 0; y < h; y++) {
+    const v = y / (h - 1);
+    if (v < 0.38) tmp.copy(low).lerp(horizon, v / 0.38);
+    else if (v < 0.66) tmp.copy(horizon).lerp(mid, (v - 0.38) / 0.28);
+    else tmp.copy(mid).lerp(top, (v - 0.66) / 0.34);
+    const r = Math.round(tmp.r * 255),
+      g = Math.round(tmp.g * 255),
+      b = Math.round(tmp.b * 255);
+    for (let x = 0; x < w; x++) data.set([r, g, b, 255], (y * w + x) * 4);
+  }
+  const tex = new T.DataTexture(data, w, h, T.RGBAFormat);
+  tex.colorSpace = T.SRGBColorSpace;
+  tex.magFilter = T.LinearFilter;
+  tex.minFilter = T.LinearFilter;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function createContactShadowTexture() {
+  const size = 128,
+    data = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++)
+    for (let x = 0; x < size; x++) {
+      const u = (x / (size - 1)) * 2 - 1,
+        v = (y / (size - 1)) * 2 - 1;
+      // Soft rounded-rectangle pure-black contact ambient occlusion under instrument base
+      const rx = Math.max(0, Math.abs(u) - 0.36),
+        ry = Math.max(0, Math.abs(v) - 0.32),
+        d = Math.hypot(rx, ry);
+      const alpha = Math.max(0, Math.min(1, Math.exp(-d * d * 8.5) * 0.52));
+      data.set([0, 0, 0, Math.round(alpha * 255)], (y * size + x) * 4);
+    }
+  const tex = new T.DataTexture(data, size, size, T.RGBAFormat);
+  tex.magFilter = T.LinearFilter;
+  tex.minFilter = T.LinearFilter;
+  tex.needsUpdate = true;
+  return tex;
+}
+
 export interface RenderData {
   config: Config;
   field: Field | null;
@@ -41,6 +91,7 @@ export interface RenderData {
   assetVisible?: boolean;
   exposure?: number;
 }
+
 export class LabRenderer {
   renderer: T.WebGLRenderer;
   scene = new T.Scene();
@@ -62,10 +113,15 @@ export class LabRenderer {
   overlayKey = '';
   overlayField: Field | null = null;
   compareCloud = new ParticleRenderer(this.fieldGPU);
-  activeQuality = 'standard';
+  activeQuality: 'high' | 'standard' | 'low' = 'standard';
   quality = new QualityGovernor();
   adaptiveQuality = true;
   env: T.WebGLRenderTarget;
+  studioTextures: T.Texture[] = [];
+  contactPad!: T.Mesh;
+  keyLight: T.DirectionalLight;
+  rimLight: T.DirectionalLight;
+  softboxes: T.RectAreaLight[] = [];
   observer: ResizeObserver;
   data: RenderData;
   dirty = true;
@@ -98,10 +154,10 @@ export class LabRenderer {
       powerPreference: 'high-performance',
     });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
-    this.renderer.setClearColor('#081f30');
+    this.renderer.setClearColor('#061726');
     this.renderer.outputColorSpace = T.SRGBColorSpace;
     this.renderer.toneMapping = T.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
+    this.renderer.toneMappingExposure = 0.96;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = T.VSMShadowMap;
     this.renderer.localClippingEnabled = true;
@@ -121,37 +177,53 @@ export class LabRenderer {
       this.data.director?.interrupt();
       this.dirty = true;
     };
-    this.scene.background = new T.Color('#081f30');
-    this.scene.fog = new T.Fog('#081f30', 18, 45);
+
+    // Deep chromatic dark scientific studio atmosphere + cyclorama gradient sphere
+    this.scene.background = new T.Color('#061726');
+    this.scene.fog = new T.Fog('#061726', 14, 34);
+    const backdropTex = createStudioBackdropTexture();
+    this.studioTextures.push(backdropTex);
+    const cyclorama = new T.Mesh(
+      new T.SphereGeometry(42, 32, 20),
+      new T.MeshBasicMaterial({
+        map: backdropTex,
+        side: T.BackSide,
+        depthWrite: false,
+        fog: false,
+      }),
+    );
+    cyclorama.position.y = 2;
+    this.scene.add(cyclorama);
+
+    // Fallback procedural softbox studio PMREM before real HDR loads
     const pm = new T.PMREMGenerator(this.renderer),
       room = new T.Scene();
-    room.background = new T.Color('#2c3034');
+    room.background = new T.Color('#1c2934');
     const cards: T.Mesh[] = [];
-    for (const [w, h, x, y, z, intensity] of [
-      [9, 3, -5, 8, 0, 2.6],
-      [2, 8, 6, 3, -5, 2],
-      [6, 2, 0, 4, 8, 1.2],
+    for (const [w, h, x, y, z, r, g, b] of [
+      [10, 3.5, -5.5, 7.5, 2.5, 2.5, 2.4, 2.25],
+      [3.5, 7.5, 6.5, 4.0, -5.5, 1.85, 2.1, 2.3],
+      [7, 2.5, 0, 5.5, 7.5, 1.05, 1.25, 1.4],
+      [5, 2, -2, 2.5, -7, 1.5, 1.85, 2.05],
     ]) {
       const card = new T.Mesh(
         new T.PlaneGeometry(w, h),
-        new T.MeshBasicMaterial({
-          color: new T.Color(intensity, intensity, intensity),
-          side: T.DoubleSide,
-        }),
+        new T.MeshBasicMaterial({ color: new T.Color(r, g, b), side: T.DoubleSide }),
       );
       card.position.set(x, y, z);
-      card.lookAt(0, 1, 0);
+      card.lookAt(0, 1.5, 0);
       room.add(card);
       cards.push(card);
     }
     this.env = pm.fromScene(room, 0.04);
     this.scene.environment = this.env.texture;
-    this.scene.environmentIntensity = 0.7;
+    this.scene.environmentIntensity = 0.72;
     cards.forEach((c) => {
       c.geometry.dispose();
       (c.material as T.Material).dispose();
     });
     pm.dispose();
+
     new HDRLoader().load(
       `${import.meta.env.BASE_URL}environment/studio_small_08_1k.hdr`,
       (hdr) => {
@@ -166,8 +238,8 @@ export class LabRenderer {
         this.env.dispose();
         this.env = next;
         this.scene.environment = next.texture;
-        this.scene.environmentIntensity = 0.62;
-        this.scene.environmentRotation.y = 0.65;
+        this.scene.environmentIntensity = 0.58;
+        this.scene.environmentRotation.y = 1.25;
         this.environmentReady = true;
         this.dirty = true;
       },
@@ -176,57 +248,127 @@ export class LabRenderer {
         this.environmentReady = false;
       },
     );
+
+    // Sculpted overhead & grazing softboxes for authentic anisotropic aluminum reflection without glare blowout
     void import('three/addons/lights/RectAreaLightUniformsLib.js').then(
       ({ RectAreaLightUniformsLib }) => {
         if (this.disposed) return;
         RectAreaLightUniformsLib.init();
-        const softbox = new T.RectAreaLight('#e5edf2', 5.5, 4, 6);
-        softbox.position.set(-3, 5, 3);
-        softbox.lookAt(0, 1.5, 0);
-        this.scene.add(softbox);
-        const edge = new T.RectAreaLight('#c2dce8', 3.2, 2, 5);
-        edge.position.set(4, 4, -4);
-        edge.lookAt(0, 1.8, 0);
-        this.scene.add(edge);
+        const overhead = new T.RectAreaLight('#e5eef3', 2.4, 5.2, 4.0);
+        overhead.position.set(-4.6, 6.2, 2.2);
+        overhead.lookAt(0, 1.8, 0);
+        this.scene.add(overhead);
+        const rimBox = new T.RectAreaLight('#b0d5e8', 2.4, 3.2, 4.6);
+        rimBox.position.set(5.2, 3.8, -5.0);
+        rimBox.lookAt(0, 1.5, 0);
+        this.scene.add(rimBox);
+        this.softboxes.push(overhead, rimBox);
         this.dirty = true;
       },
     );
 
-    this.scene.add(new T.HemisphereLight('#c5e5f2', '#27312d', 0.42));
-    const key = new T.DirectionalLight('#fff4e5', 2.1);
-    key.position.set(-3, 8, 3);
+    // Cinematic Scientific Studio 3-Point Rig: Warm-Neutral Key + Steel-Blue Fill + Precision Rim
+    this.scene.add(new T.HemisphereLight('#c4e0ee', '#10202b', 0.42));
+
+    const key = new T.DirectionalLight('#fff3e4', 2.05);
+    key.position.set(-3.8, 7.8, 4.2);
     key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
-    Object.assign(key.shadow.camera, { left: -7, right: 7, top: 7, bottom: -7 });
-    key.shadow.normalBias = 0.015;
-    key.shadow.intensity = 0.38;
-    key.shadow.radius = 4;
+    Object.assign(key.shadow.camera, {
+      left: -4.4,
+      right: 4.4,
+      top: 4.4,
+      bottom: -4.4,
+      near: 1.5,
+      far: 18,
+    });
+    key.shadow.normalBias = 0.012;
+    key.shadow.intensity = 0.5;
+    key.shadow.radius = 3.0;
     key.shadow.blurSamples = 6;
     this.scene.add(key);
-    const fill = new T.DirectionalLight('#b7d9e8', 1.5);
-    fill.position.set(5, 4, -4);
+    this.keyLight = key;
+
+    const fill = new T.DirectionalLight('#9bcbe0', 1.05);
+    fill.position.set(5.4, 4.4, -3.2);
     this.scene.add(fill);
-    const bench = new T.Mesh(
-      new T.BoxGeometry(12, 0.22, 8),
-      new T.MeshStandardMaterial({ color: '#0c2430', roughness: 0.8, metalness: 0.12 }),
-    );
-    bench.position.set(0, -0.14, 0);
+
+    // Dedicated rim light to sculpt the dark anodized speaker basket, surround, and plate bevel
+    const rim = new T.DirectionalLight('#9ed3e8', 1.32);
+    rim.position.set(2.4, 3.4, -6.4);
+    this.scene.add(rim);
+    this.rimLight = rim;
+
+    // ── PRECISION OPTICAL BREADBOARD TABLE ──────────────────────────────────────
+    const tableGroup = new T.Group();
+    const bench = new T.Mesh(new T.BoxGeometry(13.6, 0.24, 9.2), this.materials.opticalTable);
+    bench.position.set(0, -0.125, 0);
     bench.receiveShadow = true;
-    this.scene.add(bench);
-    for (const x of [-4.5, 4.5])
-      for (const z of [-2.8, 2.8]) {
-        const leg = new T.Mesh(new T.BoxGeometry(0.16, 2, 0.16), this.materials.darkMetal);
-        leg.position.set(x, -1.2, z);
-        this.scene.add(leg);
+    tableGroup.add(bench);
+
+    // Dark anodized chamfered edge trim around optical breadboard perimeter (never stark bright white)
+    const railLong = new T.BoxGeometry(13.66, 0.055, 0.06),
+      railShort = new T.BoxGeometry(0.06, 0.055, 9.26);
+    for (const z of [-4.61, 4.61]) {
+      const r = new T.Mesh(railLong, this.materials.darkMetal);
+      r.position.set(0, -0.028, z);
+      r.receiveShadow = true;
+      tableGroup.add(r);
+    }
+    for (const x of [-6.81, 6.81]) {
+      const r = new T.Mesh(railShort, this.materials.darkMetal);
+      r.position.set(x, -0.028, 0);
+      r.receiveShadow = true;
+      tableGroup.add(r);
+    }
+
+    // Recessed under-frame & heavy pneumatic isolation legs
+    const underFrame = new T.Mesh(new T.BoxGeometry(12.6, 0.16, 8.2), this.materials.black);
+    underFrame.position.set(0, -0.32, 0);
+    tableGroup.add(underFrame);
+    for (const x of [-5.4, 5.4])
+      for (const z of [-3.4, 3.4]) {
+        const leg = new T.Mesh(
+          new T.CylinderGeometry(0.15, 0.15, 2.0, 20),
+          this.materials.darkMetal,
+        );
+        leg.position.set(x, -1.3, z);
+        tableGroup.add(leg);
+        const collar = new T.Mesh(
+          new T.CylinderGeometry(0.185, 0.185, 0.09, 20),
+          this.materials.machinedTrim,
+        );
+        collar.position.set(x, -0.45, z);
+        tableGroup.add(collar);
       }
+
+    // Soft grounded ambient occlusion pad directly beneath the apparatus support base
+    const aoTex = createContactShadowTexture();
+    this.studioTextures.push(aoTex);
+    const contactPad = new T.Mesh(
+      new T.PlaneGeometry(3.3, 3.0),
+      new T.MeshBasicMaterial({
+        map: aoTex,
+        transparent: true,
+        depthWrite: false,
+      }),
+    );
+    contactPad.rotation.x = -Math.PI / 2;
+    contactPad.position.set(0, 0.001, 0);
+    contactPad.renderOrder = 0;
+    this.contactPad = contactPad;
+    tableGroup.add(contactPad);
+    this.scene.add(tableGroup);
+
     const floor = new T.Mesh(
-      new T.PlaneGeometry(100, 100),
-      new T.MeshStandardMaterial({ color: '#071a29', roughness: 1 }),
+      new T.PlaneGeometry(140, 140),
+      new T.MeshStandardMaterial({ color: '#061726', roughness: 0.98, metalness: 0.02 }),
     );
     floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -2.2;
+    floor.position.y = -2.3;
     floor.receiveShadow = true;
     this.scene.add(floor);
+
     this.scene.add(this.instrument.root, this.overlay);
     this.instruments.set('bolted', this.instrument);
     this.scene.add(this.cloud.root, this.compareCloud.root);
@@ -241,6 +383,7 @@ export class LabRenderer {
     host.addEventListener('pointerup', this.pointerUp);
     this.loop();
   }
+
   update(data: RenderData) {
     const plateY =
       data.config.device?.connector.length.value != null
@@ -263,6 +406,7 @@ export class LabRenderer {
     this.data = data;
     this.dirty = true;
   }
+
   resize() {
     this.renderer.setSize(this.host.clientWidth, this.host.clientHeight, false);
     this.rig.camera.aspect = this.host.clientWidth / Math.max(1, this.host.clientHeight);
@@ -273,9 +417,11 @@ export class LabRenderer {
     }
     this.dirty = true;
   }
+
   pointerDown = (e: PointerEvent) => {
     this.down = [e.clientX, e.clientY];
   };
+
   pointerUp = (e: PointerEvent) => {
     if (Math.hypot(e.clientX - this.down[0], e.clientY - this.down[1]) > 5) return;
     const rect = this.host.getBoundingClientRect();
@@ -304,6 +450,7 @@ export class LabRenderer {
     while (selected && !selected.userData.part) selected = selected.parent;
     this.select(selected?.userData.part ?? null);
   };
+
   clearOverlay() {
     for (const o of [...this.overlay.children]) {
       this.overlay.remove(o);
@@ -314,7 +461,8 @@ export class LabRenderer {
       }
     }
   }
-  lines(vertices: number[], color: string, opacity = 0.7) {
+
+  lines(vertices: number[], color: string, opacity = 0.78) {
     const g = new T.BufferGeometry().setAttribute(
         'position',
         new T.Float32BufferAttribute(vertices, 3),
@@ -325,6 +473,7 @@ export class LabRenderer {
     line.renderOrder = 4;
     this.overlay.add(line);
   }
+
   selectInstrument(construction: 'adhesive' | 'bolted') {
     let next = this.instruments.get(construction);
     if (!next) {
@@ -339,6 +488,7 @@ export class LabRenderer {
     for (const ins of this.instruments.values()) ins.root.visible = ins === next;
     this.instrument = next;
   }
+
   setAsset(asset: LoadedDeviceAsset | null) {
     if (this.asset === asset) return;
     if (this.asset) this.scene.remove(this.asset.root);
@@ -377,7 +527,6 @@ export class LabRenderer {
       asset.root.position.set(-centre.x, PLATE_Y - centre.y, -centre.z);
       this.scene.add(asset.root);
       asset.root.updateMatrixWorld(true);
-      // Assign parent tags first, then let explicitly mapped child parts override them.
       for (const [id, node] of Object.entries(asset.parts).sort(
         (a, b) => hierarchyDepth(a[1]) - hierarchyDepth(b[1]),
       )) {
@@ -400,6 +549,7 @@ export class LabRenderer {
       }
     }
   }
+
   prepareAsset(
     poses: Record<
       string,
@@ -453,10 +603,11 @@ export class LabRenderer {
         if (m instanceof T.MeshStandardMaterial && original.emissive)
           m.emissive
             .copy(original.emissive)
-            .add(new T.Color(v.selected === id ? '#174959' : '#000000'));
+            .add(new T.Color(v.selected === id ? '#1b5d70' : '#000000'));
       }
     });
   }
+
   prepare(
     d: Omit<RenderData, 'compare'>,
     phase: number,
@@ -499,6 +650,7 @@ export class LabRenderer {
       this.sectionDisplay + (v.sectionAxis === 'y' ? this.plateY : 0),
     );
     if (assetVisible) this.prepareAsset(poses, v, plane);
+
     for (const [id, part] of Object.entries(ins.parts)) {
       const pose = poses[id];
       part.position.fromArray(pose?.offset ?? [0, 0, 0]);
@@ -548,13 +700,14 @@ export class LabRenderer {
           m.transparent = ghost;
           m.needsUpdate = true;
         }
-        m.opacity = ghost ? 0.18 : 1;
+        m.opacity = ghost ? 0.16 : 1;
         o.castShadow = !ghost;
         m.depthWrite = !ghost;
-        m.emissive.set(v.selected === id ? '#57798b' : '#000000');
-        m.emissiveIntensity = 0.2;
+        m.emissive.set(v.selected === id ? '#277a8c' : '#000000');
+        m.emissiveIntensity = v.selected === id ? 0.34 : 0;
       });
     }
+
     if (construction === 'adhesive') {
       const group = ins.parts.coupler,
         scale =
@@ -568,22 +721,45 @@ export class LabRenderer {
       group.scale.z =
         c.device?.connector.depth.value != null ? (c.device.connector.depth.value * 12) / 0.31 : 1;
     }
+
     // Plate topology/normals stay immutable during playback; deformation and data colors are GPU sampled.
     ins.plate.scale.set(scaleX, 1, scaleZ);
     this.fieldGPU.uniforms.uThickness.value = p.thickness / 0.002;
     this.fieldGPU.uniforms.uPlateSize.value.set(p.width * 12, p.height * 12);
     this.fieldGPU.update(f, phase, v.gain, v.layer);
+
     const mat = ins.plate.material as T.MeshPhysicalMaterial;
     const colored = ['amplitude', 'displacement', 'velocity', 'acceleration', 'density'].includes(
       v.layer,
     );
-    mat.metalness = colored ? 0.08 : 0.96;
-    mat.roughness = colored ? 0.65 : 0.42;
-    mat.color.set(colored ? '#ffffff' : '#a6aeb2');
+    // Keep authentic brushed anodized aluminum material properties in material view; neutral matte base for data heatmaps
+    const plateBaseColor =
+      p.material === 'brass' ? '#b89d65' : p.material === 'steel' ? '#828e98' : '#808e98';
+    mat.metalness = colored ? 0.06 : 0.86;
+    mat.roughness = colored ? 0.72 : 0.46;
+    mat.clearcoat = colored ? 0 : 0.06;
+    mat.envMapIntensity = colored ? 0.32 : 0.76;
+    mat.color.set(colored ? '#ffffff' : plateBaseColor);
+    this.contactPad.visible = v.structure !== 'section' && v.structure !== 'ghost';
+
     if (v.layer === 'density') {
       const frame = d.run ? framePair(d.run, d.time).a : null;
       this.fieldGPU.updateDensity(frame?.positions ?? this.seeds.positions, frame ?? this.seeds);
     }
+
+    // Subtle scene-aware lighting balance for macro / exploded / top-down clarity
+    const camDist = this.rig.camera.position.distanceTo(this.rig.controls.target);
+    const isMacroView = camDist < 2.2;
+    const isTopView =
+      this.rig.camera.position.y > this.plateY + 5 &&
+      Math.hypot(this.rig.camera.position.x, this.rig.camera.position.z) < 1.2;
+    this.keyLight.intensity = isTopView ? 1.55 : isMacroView ? 2.25 : 2.05;
+    this.rimLight.intensity = isMacroView ? 0.95 : 1.32;
+    if (this.softboxes.length >= 2) {
+      this.softboxes[0].intensity = isTopView ? 1.6 : 2.4;
+      this.softboxes[1].intensity = isTopView ? 1.5 : 2.4;
+    }
+
     cloud.root.visible = v.particles && !v.showMode && !assetVisible && !pendingParticles(c.grains);
     cloud.setClipping(v.structure === 'section' ? plane : null);
     cloud.root.position.set(
@@ -600,7 +776,9 @@ export class LabRenderer {
       this.host.clientHeight,
       particleRatio,
       this.activeQuality === 'low',
+      this.activeQuality === 'high',
     );
+
     const overlayKey = JSON.stringify([
       v.layer,
       p.width,
@@ -618,6 +796,7 @@ export class LabRenderer {
     this.overlayField = f;
     this.clearOverlay();
     const y = this.plateY + p.thickness * 6 + 0.005 + (poses.plate?.offset[1] ?? 0);
+
     if (v.layer === 'mesh') {
       const vertices: number[] = [];
       for (let i = 0; i <= p.mesh; i++) {
@@ -640,7 +819,7 @@ export class LabRenderer {
           }
         }
       }
-      this.lines(vertices, '#91b5cb');
+      this.lines(vertices, '#68b8c9', 0.72);
     }
     if (f && v.layer === 'contour') {
       for (const level of [0, 0.3 * f.peak, 0.65 * f.peak]) {
@@ -653,7 +832,7 @@ export class LabRenderer {
             y,
             (segments[i + 1] - 0.5) * p.height * 12,
           );
-        this.lines(vertices, level === 0 ? '#9b6129' : '#245a72', 0.95);
+        this.lines(vertices, level === 0 ? '#e2a34b' : '#35b6c9', level === 0 ? 0.96 : 0.72);
       }
     }
     if (f && v.layer === 'vector') {
@@ -696,7 +875,7 @@ export class LabRenderer {
             ez - Math.sin(angle + 0.5) * 0.025,
           );
         }
-      this.lines(vertices, '#afc5cd');
+      this.lines(vertices, '#90cad8', 0.8);
     }
     if (this.film?.region) {
       const r = d.focusRegion ?? [0.25, 0.25, 0.75, 0.75],
@@ -715,7 +894,7 @@ export class LabRenderer {
           y,
           (d1 - 0.5) * p.height * 12,
         );
-      this.lines(vs, '#bdcbd3');
+      this.lines(vs, '#c6dce5', 0.85);
     }
     if (d.run && v.layer === 'trace') {
       const vertices: number[] = [];
@@ -745,9 +924,10 @@ export class LabRenderer {
           );
         }
       }
-      this.lines(vertices, '#d7c69d', 0.6);
+      this.lines(vertices, '#e0b063', 0.68);
     }
   }
+
   loop = () => {
     if (this.disposed) return;
     this.raf = requestAnimationFrame(this.loop);
@@ -770,12 +950,23 @@ export class LabRenderer {
     if (!this.dirty && !moved && !this.rig.goal && !this.data.animate && !filmChanged) return;
     this.draw();
   };
+
   draw(width = this.host.clientWidth, height = this.host.clientHeight, captureMode = false) {
-    this.renderer.toneMappingExposure = this.data.exposure ?? 0.95;
-    const low = this.data.view.quality === 'low' || (this.adaptiveQuality && this.quality.degraded);
-    this.activeQuality = low ? 'low' : 'standard';
-    const ratio = captureMode ? 1 : low ? 1 : Math.min(devicePixelRatio, 1.5);
+    this.renderer.toneMappingExposure = this.data.exposure ?? 0.96;
+    const requested = this.data.view.quality;
+    const degraded = this.adaptiveQuality && this.quality.degraded;
+    const effectiveQuality: 'high' | 'standard' | 'low' =
+      requested === 'low' || degraded ? 'low' : requested === 'high' ? 'high' : 'standard';
+    this.activeQuality = effectiveQuality;
+    const ratio = captureMode
+      ? 1
+      : effectiveQuality === 'low'
+        ? 1
+        : effectiveQuality === 'high'
+          ? Math.min(devicePixelRatio, 2)
+          : Math.min(devicePixelRatio, 1.5);
     if (this.renderer.getPixelRatio() !== ratio) this.renderer.setPixelRatio(ratio);
+
     const phase = this.film?.phase ?? this.data.view.phase;
     const effective = (d: Omit<RenderData, 'compare'>): Omit<RenderData, 'compare'> => {
       const time =
@@ -849,6 +1040,7 @@ export class LabRenderer {
       );
       this.renderer.render(this.scene, this.rig.camera);
     }
+
     Object.assign(this.renderer.domElement.dataset, {
       physicalCount: String(this.cloud.stats.physicalCount),
       displayCount: String(this.cloud.stats.displayCount),
@@ -858,6 +1050,7 @@ export class LabRenderer {
     });
     this.dirty = false;
   }
+
   async capture() {
     const w = this.host.clientWidth,
       h = this.host.clientHeight,
@@ -891,6 +1084,7 @@ export class LabRenderer {
     this.dirty = true;
     return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
   }
+
   dispose() {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
@@ -913,14 +1107,13 @@ export class LabRenderer {
     });
     Object.values(this.materials).forEach((m) => {
       if (m instanceof T.Material) materials.add(m);
+      else if (m instanceof T.Texture) m.dispose();
     });
+    this.studioTextures.forEach((t) => t.dispose());
     geometries.forEach((g) => g.dispose());
     materials.forEach((m) => m.dispose());
     this.fieldGPU.dispose();
     for (const ins of this.instruments.values()) ins.plate.customDepthMaterial?.dispose();
-    this.materials.brush.dispose();
-    this.materials.roughness.dispose();
-    this.materials.fiber.dispose();
     this.env.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();

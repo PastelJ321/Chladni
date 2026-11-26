@@ -2,6 +2,12 @@
 
 2026-11-24. 기준 커밋 `200c7b3`, 기존 로컬 저장소와 `codex/chladni-v0.2` 브랜치를 유지했다. 이전 [v0.4 검증 기록](archive/VALIDATION-v04.md)과 기존 `artifacts/v04-*`는 보존했다.
 
+## 2026-11-26 게시 전 확인
+
+현재 장비·입자 재질, 조명, 카메라 연출, 데이터 색상, High 표시 화질과 UI 개편을 포함한 로컬 변경본을 확인했다. `npm test` 70/70, TypeScript/Vite 빌드, production Chromium 브라우저 흐름 11/11 및 시각 회귀가 통과했다. 변경 파일의 포맷과 `git diff --check`도 확인했다. 기존 연구 계산과 기록을 유지한 채 main과 Pages에 게시한다.
+
+아래 성능표와 Firefox/60초 측정은 이전 통합 개편 당시의 기록이다. 이번 High 화질 설정의 성능 보장으로 일반화하지 않는다.
+
 ## 실행 결과
 
 - 수정 전 기준: TypeScript/Vite 빌드, 수치·상태 테스트 36개, Chromium 브라우저 테스트 6개 통과.

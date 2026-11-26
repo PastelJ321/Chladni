@@ -63,7 +63,7 @@ let id = 0,
   sweep: Sweep;
 async function runCase(
   displayCount: number,
-  quality: 'standard' | 'low' = 'standard',
+  quality: 'high' | 'standard' | 'low' = 'standard',
   macro = false,
 ) {
   const config = cloneConfig(DEFAULT_CONFIG);
